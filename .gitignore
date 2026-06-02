@@ -1,0 +1,23 @@
+# Python virtual environment
+.venv/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Sensitive authentication data
+cookies.json
+wegame-api-export/
+
+# Generated output files
+*.csv
+*.db
+*.json
+
+# IDE settings
+.vscode/
+
+# OS files
+Thumbs.db
+.DS_Store
