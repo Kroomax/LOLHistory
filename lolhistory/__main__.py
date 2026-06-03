@@ -135,6 +135,17 @@ def build_parser() -> argparse.ArgumentParser:
     cp.add_argument("--checkpoint-file", default=None,
                     help="断点续传文件路径")
 
+    # ── 数据分析 ─────────────────────────────────────────────────────────
+    ana = p.add_argument_group("数据分析")
+    ana.add_argument("--analyze", action="store_true",
+                     help="从 SQLite 数据生成交互式 HTML 分析报告")
+    ana.add_argument("--db", default="wegame_matches.db",
+                     help="SQLite 数据库路径（默认: wegame_matches.db）")
+    ana.add_argument("--output", dest="html_output", default="lol_analysis_report.html",
+                     help="HTML 报告输出路径（默认: lol_analysis_report.html）")
+    ana.add_argument("--session-gap", type=float, default=3.0,
+                     help="Session 判定间隔小时数（默认: 3.0）")
+
     # ── 其他 ─────────────────────────────────────────────────────────────
     p.add_argument("-v", "--verbose", action="store_true", help="详细日志输出")
     return p
@@ -667,6 +678,28 @@ def main(argv: list[str] | None = None) -> int:
     # Cookie 提取模式（不调用 API — 仅提取并退出）
     if args.extract_cookies is not None:
         return run_extract_cookies(args)
+
+    # 数据分析模式
+    if args.analyze:
+        from ._analysis import generate_report
+        try:
+            path = generate_report(
+                db_path=args.db,
+                output_path=args.html_output,
+                session_gap_hours=args.session_gap,
+            )
+            print(f"\n[OK] 分析报告已生成: {path}")
+            print(f"   在浏览器中打开即可查看。")
+        except FileNotFoundError as e:
+            print(f"\n[错误] {e}", file=sys.stderr)
+            return 1
+        except Exception as e:
+            print(f"\n[错误] 生成报告失败: {e}", file=sys.stderr)
+            if args.verbose:
+                import traceback
+                traceback.print_exc()
+            return 1
+        return 0
 
     if args.method == "lcu":
         return run_lcu(args)
