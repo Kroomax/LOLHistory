@@ -56,7 +56,29 @@ MAP_NAMES: dict[int, str] = {
 
 TFT_QUEUE_IDS = {1090, 1100, 1110, 1111, 1130, 1150, 1160, 1170}
 
+# ── WeGame API 段位数值 → 中文名 ───────────────────────────────────────────
+# 与 _analysis.py 中 _WEGAME_TIER_MAP 对齐（1=钻石, 6=超凡大师）
+# WeGame 编号方向与 Riot 不同：数值越小段位越高（非大师段位），
+# 大师及以上从 6 开始递增
+
+WEGAME_TIER_NAMES: dict[int, str] = {
+    0: "未定级",
+    1: "钻石",
+    2: "翡翠",
+    3: "铂金",
+    4: "黄金",
+    5: "白银",
+    6: "超凡大师",
+    7: "傲世宗师",
+    8: "最强王者",
+}
+
 # ── 工具函数 ──────────────────────────────────────────────────────────────
+
+def get_wegame_tier_name(tier: int) -> str:
+    """WeGame API 返回的段位数值 → 中文显示名。"""
+    return WEGAME_TIER_NAMES.get(tier, f"段位{tier}")
+
 
 def get_queue_name(qid: int) -> str:
     """根据队列ID返回对局类型名称。"""

@@ -9,12 +9,13 @@ __pycache__/
 # Sensitive authentication data
 cookies.json
 wegame-api-export/
+TODO*
 
 # Generated output files
 *.csv
 *.db
 *.json
-lol_analysis_report*
+report*
 
 # IDE settings
 .vscode/

@@ -8,7 +8,7 @@ import sqlite3
 import json
 import math
 import statistics
-from datetime import datetime, timedelta
+from datetime import datetime
 from collections import defaultdict, Counter
 from pathlib import Path
 
@@ -111,7 +111,6 @@ _CHART_BORDERS = [c.replace("0.8", "1.0") for c in _CHART_COLORS]
 _DAYS_CN = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 _POSITION_ORDER = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY", "Invalid"]
 
-
 # ── 工具函数 ─────────────────────────────────────────────────────────────────
 
 def _champion_name(cid: int) -> str:
@@ -123,7 +122,6 @@ def _champion_name(cid: int) -> str:
         return parts[1] if len(parts) > 1 else name
     return f"英雄{cid}"
 
-
 def _champion_name_en(cid: int) -> str:
     """返回英雄英文名，未知则返回 ID。"""
     name = _CHAMPION_NAMES.get(cid)
@@ -131,13 +129,11 @@ def _champion_name_en(cid: int) -> str:
         return name.split(" ", 1)[0]
     return f"Champion{cid}"
 
-
 def _wegame_tier_info(tier_str: str) -> tuple[int, str] | None:
     """返回 WeGame 段位值对应的 (标准索引, 中文名)，未知则返回 None。"""
     if not tier_str or tier_str not in _WEGAME_TIER_MAP:
         return None
     return _WEGAME_TIER_MAP[tier_str]
-
 
 def _tier_name(tier_str: str) -> str:
     """WeGame 段位数值→中文名。"""
@@ -148,7 +144,6 @@ def _tier_name(tier_str: str) -> str:
     if tier_str and tier_str in _TIER_INDEX:
         return _TIER_NAMES_CN[_TIER_INDEX[tier_str]]
     return "无段位"
-
 
 def _tier_rank_display(tier_str: str, rank_str: str) -> str:
     """段位+等级 显示文本，如 '钻石 II'、'超凡大师'。"""
@@ -172,7 +167,6 @@ def _tier_rank_display(tier_str: str, rank_str: str) -> str:
         return f"{cn} {rk}"
     return "无段位"
 
-
 def _total_lp(tier_str: str, lp: int) -> int | None:
     """合成连续 LP 分数：标准段位索引 * 400 + LP。"""
     if not tier_str:
@@ -184,11 +178,9 @@ def _total_lp(tier_str: str, lp: int) -> int | None:
         return _TIER_INDEX[tier_str] * 400 + (lp or 0)
     return None
 
-
 def _win_rate(wins: int, total: int) -> float:
     """计算胜率百分比，保留一位小数。"""
     return round(wins / total * 100, 1) if total > 0 else 0.0
-
 
 # ── 数据加载 ─────────────────────────────────────────────────────────────────
 
@@ -224,11 +216,9 @@ def _load_matches(db_path: str) -> list[dict]:
 
     return matches
 
-
 def _filter_ranked(matches: list[dict]) -> list[dict]:
     """仅保留排位单双排 (queue_id=420)。"""
     return [m for m in matches if m.get("game_queue_id") == 420]
-
 
 # ── 总览分析 ─────────────────────────────────────────────────────────────────
 
@@ -300,14 +290,24 @@ def _analyze_overview(matches: list[dict]) -> dict:
     champ_counts = Counter(m["champion_id"] for m in matches)
     most_played = champ_counts.most_common(1)[0] if champ_counts else (0, 0)
 
-    # 独特英雄/位置
-    unique_champs = len(set(m["champion_id"] for m in matches))
-    unique_positions = len(set(m["position"] for m in matches))
+    # 英雄池：胜场至少为10的英雄的数量
+    champ_win_counts = Counter(m["champion_id"] for m in matches if m["win"])
+    hero_pool = sum(1 for cnt in champ_win_counts.values() if cnt >= 10)
+    # 位置灵活度：仅计召唤师峡谷中胜场≥10的位置
+    pos_win_counts = Counter(m["position"] for m in matches if m["win"] and m.get("map_id") == 11)
+    unique_positions = sum(1 for cnt in pos_win_counts.values() if cnt >= 10)
 
-    avg_score = sum(m["game_score"] for m in matches) / total if total > 0 else 0
-    max_score = max(m["game_score"] for m in matches) if matches else 0
+    # 最长连胜
+    longest_win_streak = 0
+    cur_streak = 0
+    for m in matches:
+        if m["win"]:
+            cur_streak += 1
+            longest_win_streak = max(longest_win_streak, cur_streak)
+        else:
+            cur_streak = 0
 
-    # 整体评价
+    # 整体评价（含3个突出指标评论）
     if wr >= 55:
         rating = "⭐ 强势上分选手——胜率稳健，实力远超当前段位。"
     elif wr >= 50:
@@ -316,6 +316,49 @@ def _analyze_overview(matches: list[dict]) -> dict:
         rating = "⚖️ 均势选手——胜率接近五成，需要找到突破瓶颈的关键维度。"
     else:
         rating = "📉 需要调整——胜率偏低，建议从下方分析中找出拖累胜率的核心因子。"
+
+    # 挑选3个最值得评论的突出指标
+    metric_comments = []
+    # MVP率
+    mvp_rate = round(total_mvps / total * 100, 1) if total > 0 else 0
+    if mvp_rate >= 10:
+        metric_comments.append(f"MVP率高达{mvp_rate}%，在队伍中经常扮演关键角色")
+    elif mvp_rate >= 5:
+        metric_comments.append(f"MVP率{mvp_rate}%，时有亮眼发挥")
+    # SVP率
+    svp_rate = round(total_svps / total * 100, 1) if total > 0 else 0
+    if svp_rate >= 15:
+        metric_comments.append(f"SVP率达{svp_rate}%（{total_svps}次），实力在线但团队配合欠佳")
+    # 最长连胜
+    if longest_win_streak >= 5:
+        metric_comments.append(f"最长打出过{longest_win_streak}连胜，上分爆发力强")
+    # 英雄池
+    if hero_pool >= 5:
+        metric_comments.append(f"英雄池深达{hero_pool}个高胜率英雄，BP阶段难以被针对")
+    elif hero_pool == 1:
+        metric_comments.append("绝活专精玩家，一招鲜吃遍天")
+    # 综合KDA
+    if overall_kda >= 3:
+        metric_comments.append(f"综合KDA高达{overall_kda}，击杀参与度高且死亡控制得当")
+    # 五杀
+    if total_penta > 3:
+        metric_comments.append(f"斩获{total_penta}次五杀，团战收割能力极强")
+    # 四杀
+    if total_quadra >= 3:
+        metric_comments.append(f"{total_quadra}次四杀，离五杀只差临门一脚")
+    # 位置灵活度（仅计胜场≥10的位置）
+    if unique_positions >= 3:
+        metric_comments.append(f"横跨{unique_positions}个位置，阵容适配力极强")
+    # 场均击杀
+    if avg_kills >= 8:
+        metric_comments.append(f"场均{avg_kills}击杀，线上压制力拉满")
+    # 出勤率
+    if attendance >= 50:
+        metric_comments.append(f"出勤率{attendance}%，游戏习惯规律稳定")
+    # 取前3个，用中文分号分隔
+    highlight = "；".join(metric_comments[:3])
+    if highlight:
+        rating += f" {highlight}。"
 
     # 概要
     cname = _champion_name(most_played[0])
@@ -342,12 +385,11 @@ def _analyze_overview(matches: list[dict]) -> dict:
         "highest_tier": highest_tier_display, "current_tier": current_tier_display,
         "most_played_champ": most_played[0], "most_played_champ_name": cname,
         "most_played_games": most_played[1],
-        "unique_champions": unique_champs, "unique_positions": unique_positions,
-        "avg_score": round(avg_score), "max_score": max_score,
+        "hero_pool": hero_pool, "unique_positions": unique_positions,
+        "longest_win_streak": longest_win_streak,
         "overall_rating": rating,
         "summary": summary,
     }
-
 
 # ── 时间维度胜率因子 ────────────────────────────────────────────────────────
 
@@ -384,7 +426,6 @@ def _analyze_win_rate_by_day_of_week(matches: list[dict]) -> dict:
 
     return {"labels": labels, "win_rates": win_rates, "games": games, "wins": wins, "summary": summary}
 
-
 def _analyze_win_rate_by_hour(matches: list[dict]) -> dict:
     """按小时分析胜率（仅显示 >10 场的时段胜率）。"""
     hour_stats = {h: {"wins": 0, "total": 0} for h in range(24)}
@@ -419,7 +460,6 @@ def _analyze_win_rate_by_hour(matches: list[dict]) -> dict:
 
     return {"labels": labels, "win_rates": win_rates_display, "games": games, "summary": summary}
 
-
 def _analyze_win_rate_by_team_side(matches: list[dict]) -> dict:
     """按红蓝方分析胜率。"""
     side_stats = {100: {"wins": 0, "total": 0}, 200: {"wins": 0, "total": 0}}
@@ -448,7 +488,6 @@ def _analyze_win_rate_by_team_side(matches: list[dict]) -> dict:
         "wins": [side_stats[100]["wins"], side_stats[200]["wins"]],
         "summary": summary,
     }
-
 
 def _analyze_win_rate_by_position(matches: list[dict]) -> dict:
     """按位置分析胜率。"""
@@ -491,7 +530,6 @@ def _analyze_win_rate_by_position(matches: list[dict]) -> dict:
 
     return {"labels": labels, "win_rates": win_rates, "games": games, "wins": wins, "summary": summary}
 
-
 def _analyze_win_rate_by_lp_range(matches: list[dict]) -> dict:
     """按当前 LP 区间分析胜率（仅排位）。"""
     ranked = _filter_ranked(matches)
@@ -530,7 +568,6 @@ def _analyze_win_rate_by_lp_range(matches: list[dict]) -> dict:
         summary = f"各 LP 区间表现接近（高分段 {high_wr}% vs 低分段 {low_wr}%），心态不会随 LP 波动。"
 
     return {"labels": labels, "win_rates": win_rates, "games": games, "summary": summary}
-
 
 def _analyze_win_rate_by_duration(matches: list[dict]) -> dict:
     """按对局时长分桶分析胜率。"""
@@ -580,7 +617,6 @@ def _analyze_win_rate_by_duration(matches: list[dict]) -> dict:
         summary = f"前中后各阶段发挥均衡（前期{early}% / 后期{late}%），你能适应各种节奏的对局。"
 
     return {"labels": labels, "win_rates": win_rates, "games": games, "scatter": scatter, "summary": summary}
-
 
 def _analyze_mystery_factor(matches: list[dict]) -> dict:
     """聚合所有维度胜率方差，找出'神秘因子'。"""
@@ -638,7 +674,6 @@ def _analyze_mystery_factor(matches: list[dict]) -> dict:
 
     return {"dimensions": dimensions, "summary": summary}
 
-
 def _analyze_honors_impact(matches: list[dict]) -> dict:
     """分析获得各项荣誉时 vs 未获得时的胜率。"""
     honors = [
@@ -682,7 +717,6 @@ def _analyze_honors_impact(matches: list[dict]) -> dict:
         summary = "各项荣誉与胜率关联较为均衡，你的打法偏向团队协作而非个人carry。"
 
     return {"honors": results, "summary": summary}
-
 
 # ── 英雄分析 ─────────────────────────────────────────────────────────────────
 
@@ -786,21 +820,24 @@ def _analyze_champion_radar(matches: list[dict]) -> dict:
         "summary": summary,
     }
 
-
 def _analyze_champion_pool(matches: list[dict]) -> dict:
     """英雄池分析。"""
     champ_counts = Counter(m["champion_id"] for m in matches)
     total = len(matches)
 
-    # 英雄使用频率
+    # 英雄使用频率（仅展示对局数 ≥3 的英雄，最多 15 个）
     freq = []
-    for cid, cnt in champ_counts.most_common(15):
+    for cid, cnt in champ_counts.most_common():
+        if cnt < 3:
+            continue
         wins = sum(1 for m in matches if m["champion_id"] == cid and m["win"])
         freq.append({
             "champion_id": cid, "name": _champion_name(cid),
             "games": cnt, "wins": wins, "losses": cnt - wins,
             "freq_pct": round(cnt / total * 100, 1),
         })
+        if len(freq) >= 15:
+            break
 
     # 绝活指数: 最常用英雄占比
     top_game_pct = champ_counts.most_common(1)[0][1] / total * 100 if champ_counts else 0
@@ -825,7 +862,6 @@ def _analyze_champion_pool(matches: list[dict]) -> dict:
         "avg_positions": round(avg_positions, 1),
         "summary": summary,
     }
-
 
 # ── 段位趋势 ─────────────────────────────────────────────────────────────────
 
@@ -901,7 +937,6 @@ def _analyze_rank_progression(matches: list[dict]) -> dict:
         "trend": trend, "lp_change": round(change),
         "summary": summary,
     }
-
 
 # ── 出勤与日历 ───────────────────────────────────────────────────────────────
 
@@ -1020,11 +1055,10 @@ def _analyze_attendance(matches: list[dict]) -> dict:
         "summary": summary,
     }
 
-
-# ── Session 分析 ─────────────────────────────────────────────────────────────
+# ── 游戏轮次分析 ─────────────────────────────────────────────────────────────
 
 def _detect_sessions(matches: list[dict], gap_hours: float) -> list[list[dict]]:
-    """按时间间隔检测连续游戏 session。"""
+    """按时间间隔检测连续游戏轮次。"""
     valid = [m for m in matches if m["_dt"] is not None]
     if not valid:
         return []
@@ -1041,9 +1075,8 @@ def _detect_sessions(matches: list[dict], gap_hours: float) -> list[list[dict]]:
     sessions.append(current)
     return sessions
 
-
-def _analyze_sessions(matches: list[dict], gap_hours: float = 3.0) -> dict:
-    """连续游戏 Session 分析。"""
+def _analyze_sessions(matches: list[dict], gap_hours: float = 2.0) -> dict:
+    """连续游戏轮次分析。"""
     sessions = _detect_sessions(matches, gap_hours)
 
     if not sessions:
@@ -1057,6 +1090,9 @@ def _analyze_sessions(matches: list[dict], gap_hours: float = 3.0) -> dict:
         last_win = sess[-1]["win"]
         last_end = sess[-1]["_dt"]
         last_end_hour = last_end.hour + last_end.minute / 60 if last_end else 0
+        # 首局开始时间
+        first_start = sess[0]["_dt"]
+        first_start_hour = first_start.hour + first_start.minute / 60 if first_start else 0
 
         session_stats.append({
             "size": len(sess),
@@ -1067,31 +1103,154 @@ def _analyze_sessions(matches: list[dict], gap_hours: float = 3.0) -> dict:
             "first_win": first_win,
             "last_win": last_win,
             "last_end_hour": round(last_end_hour, 1),
+            "first_start_hour": round(first_start_hour, 1),
             "start_time": sess[0]["_dt"].strftime("%m/%d %H:%M") if sess[0]["_dt"] else "",
         })
 
-    # Session 规模分布
+    # 游戏轮次规模分布
     size_dist = Counter(s["size"] for s in session_stats)
     size_labels = sorted(size_dist.keys())
     size_counts = [size_dist[s] for s in size_labels]
 
+    # 游戏轮次规模评语（关注规模分布本身，不涉及首末局胜率）
+    total_s = len(session_stats)
+    avg_size_raw = statistics.mean([s["size"] for s in session_stats])
+    max_size_raw = max(s["size"] for s in session_stats)
+    most_common_size = max(size_dist, key=size_dist.get)
+    most_common_pct = round(size_dist[most_common_size] / total_s * 100, 1)
+    short_sessions = sum(c for s, c in size_dist.items() if s <= 2)
+    long_sessions = sum(c for s, c in size_dist.items() if s >= 5)
+    short_pct = round(short_sessions / total_s * 100, 1)
+    long_pct = round(long_sessions / total_s * 100, 1)
+
+    if long_pct >= 40:
+        size_summary = (
+            f"共 {total_s} 个游戏轮次，{long_pct}% 的轮次持续 5 局以上——你有明显的马拉松倾向，"
+            f"一旦坐下就很难停下来。最常见的规模是每次 {most_common_size} 局（占 {most_common_pct}%），"
+            f"平均 {avg_size_raw:.1f} 局/轮次，最长连续 {max_size_raw} 局。"
+        )
+    elif short_pct >= 60:
+        size_summary = (
+            f"共 {total_s} 个游戏轮次，{short_pct}% 的轮次在 2 局以内——你是典型的'打两把就走'选手，"
+            f"游戏节奏克制而高效。最常见的规模是每次 {most_common_size} 局（占 {most_common_pct}%），"
+            f"平均 {avg_size_raw:.1f} 局/轮次。"
+        )
+    elif short_pct >= 40:
+        size_summary = (
+            f"共 {total_s} 个游戏轮次，{short_pct}% 的轮次在 2 局以内，偏向短平快节奏，"
+            f"偶尔也会连打多局。最常见的规模是每次 {most_common_size} 局（占 {most_common_pct}%），"
+            f"平均 {avg_size_raw:.1f} 局/轮次，最长连续 {max_size_raw} 局。"
+        )
+    else:
+        size_summary = (
+            f"共 {total_s} 个游戏轮次，规模分布较为均匀——你既会快速一两局收手，也会偶尔深度鏖战。"
+            f"最常见的规模是每次 {most_common_size} 局（占 {most_common_pct}%），"
+            f"平均 {avg_size_raw:.1f} 局/轮次，最长连续 {max_size_raw} 局。"
+        )
+
     # 最后一局结束时间分布
-    hour_buckets = defaultdict(int)
+    last_hour_buckets = defaultdict(int)
     for s in session_stats:
         h = int(s["last_end_hour"])
-        hour_buckets[h] += 1
-    hour_labels = list(range(24))
-    hour_counts = [hour_buckets.get(h, 0) for h in hour_labels]
+        last_hour_buckets[h] += 1
+    last_hour_labels = list(range(24))
+    last_hour_counts = [last_hour_buckets.get(h, 0) for h in last_hour_labels]
+
+    # 首局开始时间分布
+    first_hour_buckets = defaultdict(int)
+    for s in session_stats:
+        h = int(s["first_start_hour"])
+        first_hour_buckets[h] += 1
+    first_hour_labels = list(range(24))
+    first_hour_counts = [first_hour_buckets.get(h, 0) for h in first_hour_labels]
 
     # 首局 vs 末局胜率
     first_wins = sum(1 for s in session_stats if s["first_win"])
     last_wins = sum(1 for s in session_stats if s["last_win"])
-    total_s = len(session_stats)
 
     avg_size = statistics.mean([s["size"] for s in session_stats])
     max_size = max(s["size"] for s in session_stats)
 
-    # Session 内第 N 局胜率（游戏位置对胜率的影响）
+    # ── "赢一局就睡结果天亮了" 模式检测 ──
+    # 末局动机分析：末局前一场是赢还是输？→ 玩家为什么选择继续打？
+    chase_win_last = {"wins": 0, "total": 0}    # 前一场赢了→继续打（追胜）
+    chase_loss_last = {"wins": 0, "total": 0}    # 前一场输了→继续打（追输）
+    stop_after_win = 0     # 末局是胜局（赢了就停）
+    late_night_count = 0   # 深夜（0-6点）结束
+    marathon_count = 0     # 5+局马拉松
+    win_stop_sessions = 0  # 单局 session 且赢了（赢一局就走）
+    loss_stop_sessions = 0 # 单局 session 且输了
+
+    for sess in sessions:
+        if sess[-1]["win"]:
+            stop_after_win += 1
+
+        if len(sess) >= 2:
+            if sess[-2]["win"]:
+                chase_win_last["total"] += 1
+                if sess[-1]["win"]:
+                    chase_win_last["wins"] += 1
+            else:
+                chase_loss_last["total"] += 1
+                if sess[-1]["win"]:
+                    chase_loss_last["wins"] += 1
+        elif len(sess) == 1:
+            if sess[0]["win"]:
+                win_stop_sessions += 1
+            else:
+                loss_stop_sessions += 1
+
+        last_hour = sess[-1]["_dt"].hour if sess[-1]["_dt"] else 0
+        if 0 <= last_hour < 6:
+            late_night_count += 1
+
+        if len(sess) >= 5:
+            marathon_count += 1
+
+    # ── 胜率转移概率：赢了/输了之后是继续打还是停止 ──
+    win_total = 0
+    loss_total = 0
+    win_continue_s = 0
+    win_stop_s = 0
+    loss_continue_s = 0
+    loss_stop_s = 0
+    for sess_s in sessions:
+        for i, m in enumerate(sess_s):
+            if m["win"]:
+                win_total += 1
+                if i < len(sess_s) - 1:
+                    win_continue_s += 1
+                else:
+                    win_stop_s += 1
+            else:
+                loss_total += 1
+                if i < len(sess_s) - 1:
+                    loss_continue_s += 1
+                else:
+                    loss_stop_s += 1
+
+    win_continue_rate_s = round(win_continue_s / win_total * 100, 1) if win_total > 0 else 0
+    loss_continue_rate_s = round(loss_continue_s / loss_total * 100, 1) if loss_total > 0 else 0
+    win_stop_rate_s = round(win_stop_s / win_total * 100, 1) if win_total > 0 else 0
+    loss_stop_rate_s = round(loss_stop_s / loss_total * 100, 1) if loss_total > 0 else 0
+    stop_discipline_s = round(win_stop_rate_s - loss_stop_rate_s, 1)
+
+    chase_win_wr = _win_rate(chase_win_last["wins"], chase_win_last["total"])
+    chase_loss_wr = _win_rate(chase_loss_last["wins"], chase_loss_last["total"])
+    stop_win_pct = round(stop_after_win / total_s * 100, 1) if total_s > 0 else 0
+    late_night_pct = round(late_night_count / total_s * 100, 1) if total_s > 0 else 0
+
+    # 判断追赢/追输主导倾向（一方至少是另一方的 1.5 倍）
+    chase_win_dominated = (
+        chase_win_last["total"] >= 3 and chase_loss_last["total"] > 0
+        and chase_win_last["total"] >= chase_loss_last["total"] * 1.5
+    )
+    chase_loss_dominated = (
+        chase_loss_last["total"] >= 3 and chase_win_last["total"] > 0
+        and chase_loss_last["total"] >= chase_win_last["total"] * 1.5
+    )
+
+    # 游戏轮次内第 N 局胜率（游戏位置对胜率的影响）
     pos_in_session: dict[int, dict] = defaultdict(lambda: {"wins": 0, "total": 0})
     for sess in sessions:
         for i, m in enumerate(sess):
@@ -1105,30 +1264,117 @@ def _analyze_sessions(matches: list[dict], gap_hours: float = 3.0) -> dict:
     pos_wr = [_win_rate(pos_in_session[i]["wins"], pos_in_session[i]["total"]) for i in range(1, max_pos + 1)]
     pos_games = [pos_in_session[i]["total"] for i in range(1, max_pos + 1)]
 
-    # 概要
+    # 概要（首局 vs 末局 增强评语，含"赢一局就睡结果天亮了"检测）
     fw = _win_rate(first_wins, total_s)
     lw = _win_rate(last_wins, total_s)
+
+    # ── 首局 vs 末局 详细评语（用于图表卡片）──
     if lw > fw + 5:
-        summary = f"你越打越热！Session 首局胜率仅 {fw}%，但末局提升到 {lw}%——需要热身时间。平均每次上线打 {avg_size:.1f} 局。"
+        # 末局胜率高于首局 → 三种可能：赢一局就睡 / 打到赢为止 / 越打越热
+        if win_stop_rate_s > loss_stop_rate_s + 10 and avg_size <= 3:
+            # 赢后停止率显著高于输后停止率 + session偏小 → 自律型"赢一局就睡"
+            first_last_summary = (
+                f"✅ 赢一局就睡的自律玩家！{win_stop_rate_s}%的胜局你选择见好就收，"
+                f"远高于输后停止率({loss_stop_rate_s}%)。末局胜率({lw}%)胜过首局({fw}%)，"
+                f"平均每次仅 {avg_size:.1f} 局——优秀的自控力。"
+            )
+            if win_stop_sessions > loss_stop_sessions * 2:
+                first_last_summary += (
+                    f" {win_stop_sessions}次打完一局赢了就撤，执行力值得称赞。"
+                )
+        elif loss_continue_rate_s > win_continue_rate_s + 10 and avg_size >= 3.5:
+            # 输后继续率更高 + session偏大 → "打到赢为止"模式
+            first_last_summary = (
+                f"🎯 打到赢为止！输后继续率({loss_continue_rate_s}%)远超赢后继续率({win_continue_rate_s}%)——"
+                f"不甘心输着下机。末局胜率({lw}%)虽高于首局({fw}%)，但代价是平均每次打 {avg_size:.1f} 局。"
+                f"注意：{marathon_count}次马拉松式连打(5+局)，追输的成本不容忽视。"
+            )
+        elif late_night_pct >= 30:
+            first_last_summary = (
+                f"🌙 深夜战神！末局胜率({lw}%)高于首局({fw}%)，但{late_night_pct}%的游戏轮次在凌晨0-6点结束——"
+                f"越晚状态越好，却也越打越上头。{marathon_count}次马拉松式连打(5+局)。"
+            )
+        else:
+            first_last_summary = (
+                f"🔥 末局胜率({lw}%)高于首局({fw}%)，赢后继续率({win_continue_rate_s}%)"
+                f"与输后继续率({loss_continue_rate_s}%)接近——你属于慢热型选手，需要几局热身才能进入最佳状态。"
+            )
     elif fw > lw + 5:
-        summary = f"首局状态最佳（胜率 {fw}%），但随着体力下降末局跌至 {lw}%。建议控制每次游戏时长，见好就收。"
+        if chase_win_dominated and chase_win_wr < 50:
+            first_last_summary = (
+                f"🎯 赢一局就睡结果天亮了！你{chase_win_last['total']}次在赢后选择继续而非见好就收，"
+                f"但赢后末局胜率仅{chase_win_wr}%。首局胜率{fw}%→末局{lw}%，"
+                f"'再来一局'常常变成'再来一败'。建议：赢一局就走，别让连胜诱惑拖垮胜率。"
+            )
+        elif chase_loss_dominated and chase_loss_wr < 40:
+            first_last_summary = (
+                f"📉 输了不甘心！——{chase_loss_last['total']}次输后继续打，末局胜率仅{chase_loss_wr}%。"
+                f"首局({fw}%)远好于末局({lw}%)，及时止损比追回来更明智。"
+            )
+        elif late_night_pct >= 30 and marathon_count >= total_s * 0.2:
+            first_last_summary = (
+                f"🕐 深夜鏖战拖累胜率！{late_night_pct}%的游戏轮次在凌晨结束，{marathon_count}次马拉松式连打(5+局)。"
+                f"首局胜率{fw}%→末局{lw}%，早睡早起或许才是上分秘笈。"
+            )
+        elif chase_win_last["total"] >= 3 and chase_win_wr < fw - 5:
+            first_last_summary = (
+                f"⚠️ 赢后追击胜率不佳——{chase_win_last['total']}次赢后继续打，末局胜率仅{chase_win_wr}%，"
+                f"远低于首局{fw}%。'手热再来一局'的效果并不好，见好就收才是上分正道。"
+            )
+        else:
+            first_last_summary = (
+                f"📊 首局状态最佳（胜率{fw}%），但随着体力下降末局跌至{lw}%。"
+                f"建议控制每次游戏时长，见好就收。"
+            )
+    else:
+        if chase_win_dominated and avg_size > 3:
+            first_last_summary = (
+                f"⚖️ 首局({fw}%)与末局({lw}%)胜率接近，状态稳定——但你有{chase_win_last['total']}次赢后继续打，"
+                f"'赢一局就走'的执行力有待加强。平均每次{avg_size:.1f}局，最长{max_size}局。"
+            )
+        elif late_night_pct >= 30 and avg_size > 3:
+            first_last_summary = (
+                f"⚖️ 首局({fw}%)与末局({lw}%)胜率接近，状态稳定——"
+                f"但{late_night_pct}%的游戏轮次在凌晨结束，注意作息对长期状态的影响。"
+            )
+        elif win_stop_sessions > loss_stop_sessions * 2 and avg_size <= 2.5:
+            first_last_summary = (
+                f"✅ 优秀的自律习惯！首局({fw}%)与末局({lw}%)胜率稳定，且{win_stop_sessions}次'赢一局就收'——"
+                f"见好就收的执行力值得称赞。平均每次仅{avg_size:.1f}局。"
+            )
+        else:
+            first_last_summary = (
+                f"⚖️ 首局({fw}%)与末局({lw}%)胜率接近，状态保持力强。"
+                f"平均每次上线打{avg_size:.1f}局，最长连续{max_size}局。"
+            )
+
+    # 主 summary（用于规模分布卡片的附加说明，保持简洁）
+    if lw > fw + 5:
+        if stop_discipline_s > 10 and avg_size <= 3:
+            summary = f"末局胜率({lw}%)高于首局({fw}%)，且{win_stop_rate_s}%的胜局你选择见好就收——'赢一局就睡'的自律习惯奏效。平均每次打 {avg_size:.1f} 局。"
+        elif loss_continue_rate_s > win_continue_rate_s + 10 and avg_size >= 3.5:
+            summary = f"末局胜率({lw}%)高于首局({fw}%)，但输后继续率({loss_continue_rate_s}%)偏高——'打到赢为止'的执念推高了末局胜率，却也拉长了每次的游戏时长（平均 {avg_size:.1f} 局）。"
+        else:
+            summary = f"你越打越热！游戏轮次首局胜率仅 {fw}%，但末局提升到 {lw}%——需要热身时间。平均每次上线打 {avg_size:.1f} 局。"
+    elif fw > lw + 5:
+        summary = f"首局状态最佳（胜率 {fw}%），但随着体力下降末局跌至 {lw}%。建议控制每次游戏时长，见好就收。平均每次上线打 {avg_size:.1f} 局。"
     else:
         summary = f"首局({fw}%)与末局({lw}%)胜率接近，状态保持稳定。平均每次上线打 {avg_size:.1f} 局，最长连续 {max_size} 局。"
 
-    # Session 内胜率趋势概要
+    # 游戏轮次内胜率趋势概要
     if len(pos_wr) >= 3:
         early_pos = pos_wr[:2]
         late_pos = pos_wr[2:]
         early_avg = statistics.mean(early_pos) if early_pos else 0
         late_avg = statistics.mean(late_pos) if late_pos else 0
         if late_avg > early_avg + 8:
-            pos_summary = f"Session 后半段胜率（{late_avg:.0f}%）明显优于前半段（{early_avg:.0f}%），你是慢热型选手，需要几局热身。"
+            pos_summary = f"游戏轮次后半段胜率（{late_avg:.0f}%）明显优于前半段（{early_avg:.0f}%），你是慢热型选手，需要几局热身。"
         elif early_avg > late_avg + 8:
-            pos_summary = f"Session 前半段胜率（{early_avg:.0f}%）更高，后半段降至 {late_avg:.0f}%——注意力随时间衰减，建议缩短连续游戏时间。"
+            pos_summary = f"游戏轮次前半段胜率（{early_avg:.0f}%）更高，后半段降至 {late_avg:.0f}%——注意力随时间衰减，建议缩短连续游戏时间。"
         else:
-            pos_summary = f"Session 内各局胜率稳定，不受游戏顺序影响——状态保持能力强。"
+            pos_summary = f"游戏轮次内各局胜率稳定，不受游戏顺序影响——状态保持能力强。"
     else:
-        pos_summary = "数据不足以分析 Session 内胜率趋势。"
+        pos_summary = "数据不足以分析游戏轮次内胜率趋势。"
 
     return {
         "total": len(session_stats),
@@ -1136,29 +1382,48 @@ def _analyze_sessions(matches: list[dict], gap_hours: float = 3.0) -> dict:
         "max_size": max_size,
         "size_labels": size_labels,
         "size_counts": size_counts,
-        "hour_labels": [f"{h}:00" for h in hour_labels],
-        "hour_counts": hour_counts,
+        "last_hour_labels": [f"{h}:00" for h in last_hour_labels],
+        "last_hour_counts": last_hour_counts,
+        "first_hour_labels": [f"{h}:00" for h in first_hour_labels],
+        "first_hour_counts": first_hour_counts,
         "first_wr": fw,
         "last_wr": lw,
         "pos_labels": pos_labels,
         "pos_wr": pos_wr,
         "pos_games": pos_games,
         "pos_summary": pos_summary,
+        "size_summary": size_summary,
         "summary": summary,
+        # 新增：末局动机分析字段
+        "first_last_summary": first_last_summary,
+        "chase_win_games": chase_win_last["total"],
+        "chase_win_wr": chase_win_wr,
+        "chase_loss_games": chase_loss_last["total"],
+        "chase_loss_wr": chase_loss_wr,
+        "stop_win_pct": stop_win_pct,
+        "late_night_pct": late_night_pct,
+        "marathon_count": marathon_count,
+        "win_stop_sessions": win_stop_sessions,
+        "loss_stop_sessions": loss_stop_sessions,
+        "win_continue_rate": win_continue_rate_s,
+        "loss_continue_rate": loss_continue_rate_s,
+        "win_stop_rate": win_stop_rate_s,
+        "loss_stop_rate": loss_stop_rate_s,
+        "stop_discipline": stop_discipline_s,
     }
-
 
 # ── 创意分析 ─────────────────────────────────────────────────────────────────
 
 def _analyze_tilt(matches: list[dict]) -> dict:
     """心态/tilt 分析：输后胜率 vs 赢后胜率。"""
     if len(matches) < 2:
-        return {"after_win": None, "after_loss": None, "after_2loss": None,
+        return {"after_win": None, "after_loss": None, "after_2loss": None, "after_2win": None,
                 "summary": "数据不足（需至少2场），无法进行 tilt 分析。"}
 
     after_win = {"wins": 0, "total": 0}
     after_loss = {"wins": 0, "total": 0}
     after_2loss = {"wins": 0, "total": 0}
+    after_2win = {"wins": 0, "total": 0}
 
     prev_results = []
     for m in matches:
@@ -1176,11 +1441,16 @@ def _analyze_tilt(matches: list[dict]) -> dict:
                 after_2loss["total"] += 1
                 if m["win"]:
                     after_2loss["wins"] += 1
+            if prev_results[-1] and prev_results[-2]:
+                after_2win["total"] += 1
+                if m["win"]:
+                    after_2win["wins"] += 1
         prev_results.append(m["win"])
 
     aw = _win_rate(after_win["wins"], after_win["total"])
     al = _win_rate(after_loss["wins"], after_loss["total"])
     a2 = _win_rate(after_2loss["wins"], after_2loss["total"])
+    a2w = _win_rate(after_2win["wins"], after_2win["total"])
 
     diff = round(aw - al, 1)
     if diff > 8:
@@ -1196,9 +1466,9 @@ def _analyze_tilt(matches: list[dict]) -> dict:
         "after_win": {"games": after_win["total"], "wins": after_win["wins"], "wr": aw},
         "after_loss": {"games": after_loss["total"], "wins": after_loss["wins"], "wr": al},
         "after_2loss": {"games": after_2loss["total"], "wins": after_2loss["wins"], "wr": a2} if after_2loss["total"] > 0 else None,
+        "after_2win": {"games": after_2win["total"], "wins": after_2win["wins"], "wr": a2w} if after_2win["total"] > 0 else None,
         "summary": summary,
     }
-
 
 def _analyze_streaks(matches: list[dict]) -> dict:
     """连胜/连败分析。"""
@@ -1265,117 +1535,6 @@ def _analyze_streaks(matches: list[dict]) -> dict:
         "summary": summary,
     }
 
-
-def _analyze_comebacks(matches: list[dict]) -> dict:
-    """抗压分析：承受伤害最多但赢了。"""
-    taken_games = [m for m in matches if m.get("most_taken")]
-    not_taken = [m for m in matches if not m.get("most_taken")]
-
-    taken_wr = _win_rate(sum(1 for m in taken_games if m["win"]), len(taken_games))
-    not_wr = _win_rate(sum(1 for m in not_taken if m["win"]), len(not_taken))
-
-    if len(taken_games) < 3:
-        summary = "抗压样本不足，你很少成为队伍中承受伤害最多的那个。"
-    elif taken_wr >= 50:
-        summary = f"你扛伤最多时胜率反而达到 {taken_wr}%（{len(taken_games)}场）——不仅能抗，还能赢，这才是真正的坦克艺术。"
-    else:
-        summary = f"扛伤最多时胜率仅 {taken_wr}%（{len(taken_games)}场），被集火时队伍很难翻盘——注意站位和时机。"
-
-    return {
-        "taken_games": len(taken_games), "taken_wr": taken_wr,
-        "not_games": len(not_taken), "not_wr": not_wr,
-        "summary": summary,
-    }
-
-
-def _analyze_carry(matches: list[dict]) -> dict:
-    """硬 Carry 分析：击杀最多+伤害最高。"""
-    carry = [m for m in matches if m.get("most_kills") and m.get("most_damage")]
-    non_carry = [m for m in matches if not (m.get("most_kills") and m.get("most_damage"))]
-
-    carry_wr = _win_rate(sum(1 for m in carry if m["win"]), len(carry))
-    non_wr = _win_rate(sum(1 for m in non_carry if m["win"]), len(non_carry))
-    carry_pct = len(carry) / len(matches) * 100 if matches else 0
-
-    if len(carry) < 3:
-        summary = "你没有多少'完美carry局'（击杀+伤害双料第一），你可能更偏向团队配合型选手。"
-    elif carry_wr >= 70:
-        summary = f"当你打出'击杀+伤害双料 MVP'级表现时，胜率飙升至 {carry_wr}%（{len(carry)}场）——你就是队伍的绝对核心。"
-    else:
-        summary = f"即使击杀+伤害全队第一，胜率也只有 {carry_wr}%——这说明 LOL 是团队游戏，个人carry 不等于胜利。"
-
-    return {
-        "carry_games": len(carry), "carry_wr": carry_wr, "carry_pct": round(carry_pct, 1),
-        "non_games": len(non_carry), "non_wr": non_wr,
-        "summary": summary,
-    }
-
-
-def _analyze_support_carry(matches: list[dict]) -> dict:
-    """助攻王分析。"""
-    assist_games = [m for m in matches if m.get("most_assists")]
-    non_assist = [m for m in matches if not m.get("most_assists")]
-
-    a_wr = _win_rate(sum(1 for m in assist_games if m["win"]), len(assist_games))
-    na_wr = _win_rate(sum(1 for m in non_assist if m["win"]), len(non_assist))
-
-    if len(assist_games) < 3:
-        summary = "你很少成为助攻王——你可能不是以助攻为核心打法的选手。"
-    elif a_wr >= 60:
-        summary = f"助攻最多时胜率高达 {a_wr}%（{len(assist_games)}场），证明你在团队中起到了关键的组织串联作用。"
-    else:
-        summary = f"助攻最多时胜率 {a_wr}%，有时光靠助攻还不足以赢下比赛。"
-
-    return {
-        "assist_games": len(assist_games), "assist_wr": a_wr,
-        "non_games": len(non_assist), "non_wr": na_wr,
-        "summary": summary,
-    }
-
-
-def _analyze_early_vs_late(matches: list[dict]) -> dict:
-    """前期 vs 后期分析。"""
-    if not matches:
-        return {"quartiles": [], "summary": "暂无数据。"}
-
-    sorted_by_dur = sorted(matches, key=lambda m: m["game_time_played"])
-    n = len(sorted_by_dur)
-    q_size = n // 4
-
-    quartiles = []
-    labels_cn = ["极早局 (Q1)", "偏早局 (Q2)", "偏晚局 (Q3)", "极晚局 (Q4)"]
-    for qi in range(4):
-        start = qi * q_size
-        end = (qi + 1) * q_size if qi < 3 else n
-        chunk = sorted_by_dur[start:end]
-        if not chunk:
-            continue
-        wins = sum(1 for m in chunk if m["win"])
-        dur_min = chunk[0]["game_time_played"] / 60
-        dur_max = chunk[-1]["game_time_played"] / 60
-        quartiles.append({
-            "label": labels_cn[qi],
-            "games": len(chunk),
-            "wins": wins,
-            "win_rate": _win_rate(wins, len(chunk)),
-            "dur_min": round(dur_min, 1),
-            "dur_max": round(dur_max, 1),
-        })
-
-    early_wr = quartiles[0]["win_rate"] if quartiles else 0
-    late_wr = quartiles[-1]["win_rate"] if len(quartiles) >= 2 else early_wr
-    diff = round(late_wr - early_wr, 1)
-
-    if diff > 10:
-        summary = f"你是典型的后期选手！极晚局胜率({late_wr}%)比极早局({early_wr}%)高出 {diff:.0f}%，游戏越拖越有优势。"
-    elif diff < -10:
-        summary = f"快攻是你的风格：极早局胜率({early_wr}%)远超极晚局({late_wr}%)，速战速决才是赢之道。"
-    else:
-        summary = f"前期和后期胜率差异不大（差 {abs(diff):.1f}%），你能适应各种节奏。"
-
-    return {"quartiles": quartiles, "summary": summary}
-
-
 def _analyze_consistency(matches: list[dict]) -> dict:
     """发挥稳定性分析。"""
     ranked = _filter_ranked(matches)
@@ -1419,77 +1578,6 @@ def _analyze_consistency(matches: list[dict]) -> dict:
         "summary": summary,
     }
 
-
-def _analyze_weekly_rhythm(matches: list[dict]) -> dict:
-    """周游戏节奏。"""
-    day_games = [0] * 7
-    day_wins = [0] * 7
-    for m in matches:
-        if m["_dt"]:
-            wd = m["_dt"].weekday()
-            day_games[wd] += 1
-            if m["win"]:
-                day_wins[wd] += 1
-
-    day_wr = [_win_rate(day_wins[i], day_games[i]) for i in range(7)]
-    most_active = max(range(7), key=lambda i: day_games[i])
-    most_winning = max(range(7), key=lambda i: day_wr[i] if day_games[i] > 0 else -1)
-
-    summary = f"{_DAYS_CN[most_active]}是你最活跃的一天（{day_games[most_active]}场），"
-    if day_games[most_winning] >= 3:
-        summary += f"而{_DAYS_CN[most_winning]}胜率最高（{day_wr[most_winning]}%）。"
-
-    return {
-        "labels": _DAYS_CN, "games": day_games, "win_rates": day_wr,
-        "most_active": _DAYS_CN[most_active], "most_winning": _DAYS_CN[most_winning],
-        "summary": summary,
-    }
-
-
-def _analyze_position_flexibility(matches: list[dict]) -> dict:
-    """位置灵活性分析。"""
-    pos_stats = defaultdict(lambda: {"wins": 0, "total": 0})
-    for m in matches:
-        pos = m["position"] or "Invalid"
-        pos_stats[pos]["total"] += 1
-        if m["win"]:
-            pos_stats[pos]["wins"] += 1
-
-    if not pos_stats:
-        return {"roles": [], "summary": "暂无位置数据。"}
-
-    main_role = max(pos_stats, key=lambda p: pos_stats[p]["total"])
-    main_wr = _win_rate(pos_stats[main_role]["wins"], pos_stats[main_role]["total"])
-    main_games = pos_stats[main_role]["total"]
-
-    off_wins = sum(s["wins"] for p, s in pos_stats.items() if p != main_role)
-    off_total = sum(s["total"] for p, s in pos_stats.items() if p != main_role)
-    off_wr = _win_rate(off_wins, off_total)
-
-    pos_names = {"TOP": "上单", "JUNGLE": "打野", "MIDDLE": "中单",
-                 "BOTTOM": "ADC", "UTILITY": "辅助", "Invalid": "乱斗"}
-    roles = []
-    for pos, stats in sorted(pos_stats.items(), key=lambda x: x[1]["total"], reverse=True):
-        roles.append({
-            "position": pos_names.get(pos, pos),
-            "games": stats["total"], "wins": stats["wins"],
-            "win_rate": _win_rate(stats["wins"], stats["total"]),
-            "is_main": pos == main_role,
-        })
-
-    if off_total >= 3:
-        if off_wr > main_wr + 5:
-            summary = f"有趣！你客串其他位置时胜率({off_wr}%)反而高于主位置{pos_names.get(main_role, main_role)}({main_wr}%)。也许你应该考虑转位置？"
-        elif main_wr > off_wr + 5:
-            summary = f"你的主位置{pos_names.get(main_role, main_role)}胜率({main_wr}%)明显优于客串({off_wr}%)，专注本命位置才是上分之道。"
-        else:
-            summary = f"主位置和客串位置胜率接近（{main_wr}% vs {off_wr}%），你具备不错的位置灵活性。"
-    else:
-        summary = f"你几乎只玩{pos_names.get(main_role, main_role)}（{main_games}场），是个专一的单位置选手。"
-
-    return {"roles": roles, "main_role": pos_names.get(main_role, main_role), "summary": summary}
-
-
 def _analyze_surrender(matches: list[dict]) -> dict:
     """投降分析。"""
     surr_wins = [m for m in matches if m["was_surrender"] and m["win"]]
@@ -1523,7 +1611,6 @@ def _analyze_surrender(matches: list[dict]) -> dict:
         "summary": summary,
     }
 
-
 def _analyze_afk_impact(matches: list[dict]) -> dict:
     """AFK 影响分析。"""
     afk_games = [m for m in matches if m["was_afk"]]
@@ -1542,7 +1629,6 @@ def _analyze_afk_impact(matches: list[dict]) -> dict:
         "non_afk_games": len(non_afk), "non_afk_wr": non_afk_wr,
         "summary": summary,
     }
-
 
 def _analyze_gold_efficiency(matches: list[dict]) -> dict:
     """金币效率分析（排除<4分钟重开局，按占比>20%的模式展示，GPM = 金币/分钟）。"""
@@ -1614,12 +1700,590 @@ def _analyze_gold_efficiency(matches: list[dict]) -> dict:
         "summary": r.get("summary", "暂无数据。"),
     }
 
+# ── 行为与心理分析 ──────────────────────────────────────────────────────────
+
+def _analyze_boomerang_effect(matches: list[dict]) -> dict:
+    """过度自信与救赎效应：MVP/大胜后 vs SVP/惨败后的下一局表现变化。"""
+    if not matches or len(matches) < 10:
+        return {"mvp_next_delta": [], "svp_next_delta": [], "normal_next_delta": [],
+                "mvp_count": 0, "svp_count": 0, "summary": "数据不足（需≥10场）。"}
+
+    # 按时间排序
+    sorted_m = sorted(matches, key=lambda m: m["_dt"] or datetime.min)
+
+    mvp_deltas = []   # MVP 后下一局 KDA 变化
+    svp_deltas = []   # SVP/惨败后下一局 KDA 变化
+    normal_deltas = []  # 普通局后下一局 KDA 变化
+    scatter_mvp = []   # {x: current_score, y: next_score}
+    scatter_svp = []
+    scatter_normal = []
+
+    mvp_count = 0
+    svp_count = 0
+    mvp_next_wins = 0
+    svp_next_wins = 0
+
+    for i in range(len(sorted_m) - 1):
+        cur = sorted_m[i]
+        nxt = sorted_m[i + 1]
+        # 跳过跨天（间隔>12小时的不算连续影响）
+        if cur["_dt"] and nxt["_dt"] and (nxt["_dt"] - cur["_dt"]).total_seconds() > 12 * 3600:
+            continue
+
+        cur_score = cur["game_score"]
+        nxt_score = nxt["game_score"]
+        point = {"x": cur_score, "y": nxt_score}
+
+        if cur["was_mvp"]:
+            mvp_deltas.append(nxt_score - cur_score)
+            scatter_mvp.append(point)
+            mvp_count += 1
+            if nxt["win"]:
+                mvp_next_wins += 1
+        elif cur["was_svp"] or cur["kda"] < 0.5:
+            svp_deltas.append(nxt_score - cur_score)
+            scatter_svp.append(point)
+            svp_count += 1
+            if nxt["win"]:
+                svp_next_wins += 1
+        else:
+            normal_deltas.append(nxt_score - cur_score)
+            scatter_normal.append(point)
+
+    mvp_next_wr = _win_rate(mvp_next_wins, mvp_count) if mvp_count > 0 else 0
+    svp_next_wr = _win_rate(svp_next_wins, svp_count) if svp_count > 0 else 0
+
+    avg_mvp_delta = round(statistics.mean(mvp_deltas), 1) if mvp_deltas else 0
+    avg_svp_delta = round(statistics.mean(svp_deltas), 1) if svp_deltas else 0
+
+    parts = []
+    if mvp_count >= 3:
+        if avg_mvp_delta < -1:
+            parts.append(f"MVP后下一局评分平均下降 {abs(avg_mvp_delta)} 分（过度自信效应明显），MVP后胜率仅 {mvp_next_wr}%")
+        else:
+            parts.append(f"MVP后表现稳定（评分变化 {avg_mvp_delta:+}），MVP后胜率 {mvp_next_wr}%——状态能延续")
+    else:
+        parts.append("MVP场次不足，无法评估过度自信效应")
+    if svp_count >= 3:
+        if avg_svp_delta > 1:
+            parts.append(f"惨败后反弹 +{avg_svp_delta} 分（救赎效应），SVP后胜率 {svp_next_wr}%——知耻后勇！")
+        else:
+            parts.append(f"惨败后评分变化 {avg_svp_delta:+}，SVP后胜率 {svp_next_wr}%——情绪影响较大")
+    else:
+        parts.append("惨败/SVP场次不足，无法评估救赎效应")
+
+    return {
+        "scatter_mvp": scatter_mvp, "scatter_svp": scatter_svp, "scatter_normal": scatter_normal,
+        "mvp_count": mvp_count, "svp_count": svp_count,
+        "avg_mvp_delta": avg_mvp_delta, "avg_svp_delta": avg_svp_delta,
+        "mvp_next_wr": mvp_next_wr, "svp_next_wr": svp_next_wr,
+        "summary": "；".join(parts) + "。",
+    }
+
+def _analyze_one_more_game(matches: list[dict]) -> dict:
+    """"再来一局"陷阱：游戏轮次末局胜率 vs 前N-1局胜率（独立对比），检测追输/追赢/赢后贪多行为。"""
+    if not matches or len(matches) < 5:
+        return {"session_sizes": [], "prev_wrs": [], "last_wrs": [],
+                "bin_counts": [], "chase_loss_rate": 0,
+                "win_stop_ratio": 0, "summary": "数据不足（需≥5场）。"}
+
+    # 按 session 分组（session gap = 2h）
+    sorted_m = sorted(matches, key=lambda m: m["_dt"] or datetime.min)
+    sessions = []
+    cur_session = [sorted_m[0]]
+    for i in range(1, len(sorted_m)):
+        prev = sorted_m[i - 1]
+        cur = sorted_m[i]
+        if prev["_dt"] and cur["_dt"] and (cur["_dt"] - prev["_dt"]).total_seconds() <= 2 * 3600:
+            cur_session.append(cur)
+        else:
+            sessions.append(cur_session)
+            cur_session = [cur]
+    sessions.append(cur_session)
+
+    if len(sessions) < 3:
+        return {"session_sizes": [], "prev_wrs": [], "last_wrs": [],
+                "bin_counts": [], "chase_loss_rate": 0,
+                "win_stop_ratio": 0, "summary": f"仅有 {len(sessions)} 个游戏轮次，需≥3个才能分析。"}
+
+    # ── 胜率转移概率（核心新增）──
+    # 在所有相邻对局中统计：赢后继续/输后继续/赢后停止 的概率
+    win_continue = 0    # 赢了 → 继续打下一局
+    win_stop = 0        # 赢了 → 停止（session 最后一局是胜局）
+    loss_continue = 0   # 输了 → 继续打下一局
+    loss_stop = 0       # 输了 → 停止（session 最后一局是败局）
+    win_total = 0       # 总共的胜局数
+    loss_total = 0      # 总共的败局数
+
+    for s in sessions:
+        for i, m in enumerate(s):
+            if m["win"]:
+                win_total += 1
+                if i < len(s) - 1:
+                    win_continue += 1  # 赢了但继续打
+                else:
+                    win_stop += 1      # 赢了就停
+            else:
+                loss_total += 1
+                if i < len(s) - 1:
+                    loss_continue += 1  # 输了但继续打
+                else:
+                    loss_stop += 1      # 输了就停
+
+    win_continue_rate = round(win_continue / win_total * 100, 1) if win_total > 0 else 0
+    loss_continue_rate = round(loss_continue / loss_total * 100, 1) if loss_total > 0 else 0
+    win_stop_ratio = round(win_stop / win_total * 100, 1) if win_total > 0 else 0
+    # 关键指标："赢了就停" vs "输了就停"——自律者赢后停止率 > 输后停止率
+    loss_stop_ratio = round(loss_stop / loss_total * 100, 1) if loss_total > 0 else 0
+    stop_discipline = win_stop_ratio - loss_stop_ratio  # 正值=赢后更倾向停止（自律）
+
+    # ── 按 session 规模分组（含1局"见好就收"列）──
+    size_bins = [(1, 1, "1局\n(见好就收)"), (2, 2, "2局"), (3, 3, "3局"),
+                 (4, 5, "4-5局"), (6, 999, "6+局")]
+    bin_labels = []
+    prev_wrs = []      # 前N-1局胜率（不含末局，独立指标）
+    last_wrs = []      # 末局胜率
+    bin_counts = []
+
+    for lo, hi, label in size_bins:
+        in_bin = [s for s in sessions if lo <= len(s) <= hi]
+        if len(in_bin) < 3:
+            continue
+        bin_labels.append(label)
+        bin_counts.append(len(in_bin))
+
+        if lo == 1 and hi == 1:
+            # 1局 session：整体胜率即末局胜率，前N-1局不存在
+            all_g = [g for s in in_bin for g in s]
+            last_wrs.append(_win_rate(sum(1 for g in all_g if g["win"]), len(all_g)))
+            prev_wrs.append(None)  # 标记为无前N-1局数据
+        else:
+            # 前N-1局胜率（排除末局，独立计算）
+            prev_games = [g for s in in_bin for g in s[:-1]]
+            prev_wrs.append(_win_rate(sum(1 for g in prev_games if g["win"]), len(prev_games)))
+            last_games = [s[-1] for s in in_bin]
+            last_wrs.append(_win_rate(sum(1 for g in last_games if g["win"]), len(last_games)))
+
+    # ── 追输/追赢/赢后贪多检测 ──
+    chase_loss_count = 0
+    chase_win_count = 0
+    chase_win_lose_count = 0
+    total_multi = 0
+    for s in sessions:
+        if len(s) >= 2:
+            total_multi += 1
+            prev_win = s[-2]["win"]
+            last_win = s[-1]["win"]
+            if last_win == 0 and prev_win == 0:
+                chase_loss_count += 1
+            elif last_win == 1 and prev_win == 1:
+                chase_win_count += 1
+            elif last_win == 0 and prev_win == 1:
+                chase_win_lose_count += 1
+
+    chase_loss_rate = round(chase_loss_count / total_multi * 100, 1) if total_multi > 0 else 0
+    chase_win_rate = round(chase_win_count / total_multi * 100, 1) if total_multi > 0 else 0
+    chase_win_lose_rate = round(chase_win_lose_count / total_multi * 100, 1) if total_multi > 0 else 0
+
+    # ── 末局胜率与整体均值对比（用于检测"赢一局就睡"模式）──
+    all_matches_win = sum(1 for m in matches if m["win"])
+    overall_avg_wr = _win_rate(all_matches_win, len(matches))
+    # 所有末局胜率
+    all_last_games = [s[-1] for s in sessions]
+    all_last_wr = _win_rate(sum(1 for g in all_last_games if g["win"]), len(all_last_games))
+    # 所有末局前一场胜率（排除1局session）
+    all_prev_games = [s[-2] for s in sessions if len(s) >= 2]
+    all_prev_wr = _win_rate(sum(1 for g in all_prev_games if g["win"]), len(all_prev_games)) if all_prev_games else 0
+
+    # ── 多维度评语（结合转移概率+规模对比+追输追赢）──
+    verdict_parts = []
+
+    # 先判断核心模式
+    avg_session_size = statistics.mean([len(s) for s in sessions]) if sessions else 0
+    one_game_sessions = sum(1 for s in sessions if len(s) == 1)
+    one_game_pct = round(one_game_sessions / len(sessions) * 100, 1) if sessions else 0
+    one_game_win = sum(1 for s in sessions if len(s) == 1 and s[0]["win"])
+    one_game_wr = _win_rate(one_game_win, one_game_sessions) if one_game_sessions > 0 else 0
+
+    # 模式1：赢一局就睡（末局胜率 > 整体均值 + 平均session小 + win_stop高）
+    if all_last_wr > overall_avg_wr + 5 and win_stop_ratio > loss_stop_ratio + 10 and avg_session_size <= 3:
+        verdict_parts.append(
+            f"✅ 赢一局就睡的自律玩家！{win_stop_ratio}%的胜局你选择见好就收，"
+            f"远高于输后停止率({loss_stop_ratio}%)。末局胜率({all_last_wr}%)显著高于整体均值({overall_avg_wr}%)，"
+            f"说明你善于在获胜时果断收手"
+        )
+        if one_game_pct >= 20:
+            verdict_parts.append(f"单局即停的'打完就撤'占 {one_game_pct}%，其中胜率 {one_game_wr}%")
+        if chase_win_lose_rate > 20:
+            verdict_parts.append(
+                f"但注意：仍有{chase_win_lose_count}次（{chase_win_lose_rate}%）赢后继续却末局失利——"
+                f"那些'再来一局'最终变成了'再来一败'"
+            )
+
+    # 模式2：打到赢为止（末局胜率高 + session规模大 + 输后继续率高）
+    elif all_last_wr > overall_avg_wr + 5 and loss_continue_rate > win_continue_rate + 10 and avg_session_size >= 3.5:
+        verdict_parts.append(
+            f"🎯 打到赢为止！末局胜率({all_last_wr}%)虽然高于整体均值({overall_avg_wr}%)，"
+            f"但输后继续率({loss_continue_rate}%)远超赢后继续率({win_continue_rate}%)——"
+            f"你不甘心输了就停，倾向于'不赢不走'，平均每次打 {avg_session_size:.1f} 局"
+        )
+        if chase_loss_rate > 30:
+            verdict_parts.append(f"代价：{chase_loss_rate}%的多局游戏轮次以连败收尾，追输成本不容忽视")
+
+    # 模式3：越打越热（末局胜率高 + session内递增 + 无明显追输追赢偏好）
+    elif all_last_wr > overall_avg_wr + 5:
+        verdict_parts.append(
+            f"🔥 末局胜率({all_last_wr}%)高于整体均值({overall_avg_wr}%)，且赢后续打率({win_continue_rate}%)"
+            f"与输后续打率({loss_continue_rate}%)接近——你属于慢热型选手，越打状态越好，不受上局结果影响"
+        )
+
+    # 模式4：追输陷阱（末局胜率低 + 输后继续率高）
+    if chase_loss_rate > 40:
+        verdict_parts.append(f"⚠️ 连败追输倾向明显（{chase_loss_rate}%的多局游戏轮次以连败收尾）——'再来一局'常常变成再送一局")
+    elif chase_loss_rate > 25:
+        verdict_parts.append(f"有一定追输倾向（{chase_loss_rate}%的游戏轮次以连败结束）")
+
+    # 模式5：赢后贪多（独立检测，可与上述模式叠加）
+    if chase_win_lose_rate > 25:
+        verdict_parts.append(
+            f"🔍 赢一局就睡结果天亮了！{chase_win_lose_count}次（{chase_win_lose_rate}%）赢后选择继续，"
+            f"但末局输掉——本该见好就收的胜利被'再来一局'葬送"
+        )
+    elif chase_win_lose_rate > 15:
+        verdict_parts.append(
+            f"有{chase_win_lose_count}次（{chase_win_lose_rate}%）赢后继续却末局失利——"
+            f"'赢一局就走'的执行力还有提升空间"
+        )
+
+    if chase_win_rate > 30:
+        verdict_parts.append(f"连胜追击成功率高（{chase_win_rate}%以连胜收尾），手热时乘胜追击是有效策略")
+    elif chase_win_count >= 3 and chase_win_lose_count > chase_win_count:
+        verdict_parts.append(f"赢后继续的胜率不如见好就收（赢后续胜{chase_win_count}次 vs 赢后续败{chase_win_lose_count}次）")
+
+    if not verdict_parts:
+        if chase_loss_rate <= 15 and chase_win_lose_rate <= 10:
+            verdict_parts.append(f"追输倾向低（{chase_loss_rate}%），且赢后贪多失利好少（{chase_win_lose_rate}%）——自律性优秀")
+        else:
+            verdict_parts.append(f"追输倾向较低（{chase_loss_rate}%），见好就收或及时止损的意识不错")
+
+    chase_verdict = "；".join(verdict_parts)
+
+    return {
+        "session_sizes": bin_labels, "prev_wrs": prev_wrs, "last_wrs": last_wrs,
+        "bin_counts": bin_counts, "chase_loss_rate": chase_loss_rate,
+        "chase_win_rate": chase_win_rate, "chase_win_lose_rate": chase_win_lose_rate,
+        "total_sessions": len(sessions),
+        "win_continue_rate": win_continue_rate, "loss_continue_rate": loss_continue_rate,
+        "win_stop_ratio": win_stop_ratio, "loss_stop_ratio": loss_stop_ratio,
+        "stop_discipline": round(stop_discipline, 1),
+        "all_last_wr": all_last_wr, "overall_avg_wr": overall_avg_wr,
+        "one_game_pct": one_game_pct, "one_game_wr": one_game_wr,
+        "avg_session_size": round(avg_session_size, 1),
+        "all_prev_wr": all_prev_wr,
+        "summary": f"共 {len(sessions)} 个游戏轮次。{chase_verdict}",
+    }
+
+# ── 效率与风格分析 ──────────────────────────────────────────────────────────
+
+def _analyze_carry_profile(matches: list[dict]) -> dict:
+    """Carry依赖度画像：胜/败局的详细类型分布。"""
+    if not matches or len(matches) < 5:
+        return {"labels_win": [], "win_data": [], "labels_loss": [], "loss_data": [],
+                "summary": "数据不足（需≥5场）。"}
+
+    # 计算中位 game_score（用于分类）
+    scores = [m["game_score"] for m in matches]
+    median_score = statistics.median(scores) if scores else 0
+
+    # 胜局分类
+    wins = [m for m in matches if m["win"]]
+    hard_carry = 0   # MVP + ≥2荣誉
+    contributed = 0   # 非MVP非躺赢
+    got_carried = 0   # 躺赢 (game_score < median 且无荣誉)
+
+    for m in wins:
+        honors = sum([m["most_kills"], m["most_assists"], m["most_gold"],
+                      m["most_damage"], m["most_taken"], m["most_turrets"]])
+        if m["was_mvp"] and honors >= 2:
+            hard_carry += 1
+        elif m["game_score"] < median_score and honors == 0:
+            got_carried += 1
+        else:
+            contributed += 1
+
+    # 败局分类
+    losses = [m for m in matches if not m["win"]]
+    svp_loss = 0      # SVP — 尽力局
+    crash_loss = 0    # kda<1 且 game_score < median — 崩盘
+    normal_loss = 0
+
+    for m in losses:
+        if m["was_svp"]:
+            svp_loss += 1
+        elif m["kda"] < 1 and m["game_score"] < median_score:
+            crash_loss += 1
+        else:
+            normal_loss += 1
+
+    total_wins = len(wins)
+    total_losses = len(losses)
+    total = len(matches)
+
+    hard_pct = round(hard_carry / total * 100, 1) if total > 0 else 0
+    svp_pct = round(svp_loss / total * 100, 1) if total > 0 else 0
+    crash_pct = round(crash_loss / total * 100, 1) if total > 0 else 0
+
+    if hard_pct > 20:
+        carry_verdict = "你是队伍的绝对核心——超1/5的局靠你Carry赢下。"
+    elif hard_pct > 10:
+        carry_verdict = "有一定Carry能力，能在关键局站出来。"
+    else:
+        carry_verdict = "更偏团队型选手，不依赖个人Carry取胜。"
+
+    if svp_pct > 15:
+        svp_verdict = f"但 {svp_pct}% 的局是SVP尽力局——队友不给力是最大痛点。"
+    elif crash_pct > 15:
+        svp_verdict = f"有 {crash_pct}% 的局崩盘（KDA<1+低评分），需要减少'炸线'频率。"
+    else:
+        svp_verdict = "败局也大多是正常发挥，没有频繁崩盘。"
+
+    return {
+        "labels_win": ["硬Carry", "稳定参与", "躺赢"],
+        "win_data": [hard_carry, contributed, got_carried],
+        "labels_loss": ["尽力局(SVP)", "普通败局", "崩盘局"],
+        "loss_data": [svp_loss, normal_loss, crash_loss],
+        "total_wins": total_wins, "total_losses": total_losses,
+        "hard_carry_pct": hard_pct, "svp_pct": svp_pct, "crash_pct": crash_pct,
+        "summary": f"{carry_verdict} {svp_verdict}",
+    }
+
+def _analyze_multi_kill_impact(matches: list[dict]) -> dict:
+    """多杀含金量分析：各多杀等级的胜率与频率分布。"""
+    if not matches:
+        return {"labels": [], "winrates": [], "counts": [], "total_games": 0,
+                "penta_loss_games": [], "summary": "暂无数据。"}
+
+    total = len(matches)
+
+    # 按最高多杀等级分组
+    tiers = [
+        ("无多杀", lambda m: m["double_kills"] == 0 and m["triple_kills"] == 0 and m["quadra_kills"] == 0 and m["penta_kills"] == 0),
+        ("双杀", lambda m: m["double_kills"] > 0 and m["triple_kills"] == 0 and m["quadra_kills"] == 0 and m["penta_kills"] == 0),
+        ("三杀", lambda m: m["triple_kills"] > 0 and m["quadra_kills"] == 0 and m["penta_kills"] == 0),
+        ("四杀", lambda m: m["quadra_kills"] > 0 and m["penta_kills"] == 0),
+        ("五杀", lambda m: m["penta_kills"] > 0),
+    ]
+
+    labels = []
+    winrates = []
+    counts = []
+    penta_loss_games = []
+
+    for label, pred in tiers:
+        group = [m for m in matches if pred(m)]
+        if not group:
+            continue
+        labels.append(label)
+        counts.append(len(group))
+        wr = _win_rate(sum(1 for m in group if m["win"]), len(group))
+        winrates.append(wr)
+
+        # 记录五杀败局（悲剧故事）
+        if label == "五杀":
+            for m in group:
+                if not m["win"]:
+                    champ = _champion_name(m["champion_id"])
+                    date_str = m["_dt"].strftime("%m/%d") if m["_dt"] else "?"
+                    penta_loss_games.append(f"{date_str} {champ} 五杀仍败")
+
+    # 计算多杀频率
+    total_multi = sum(1 for m in matches if m["double_kills"] > 0 or m["triple_kills"] > 0 or
+                      m["quadra_kills"] > 0 or m["penta_kills"] > 0)
+    multi_rate = round(total_multi / total * 100, 1) if total > 0 else 0
+
+    # 分析多杀质量
+    if len(winrates) >= 2 and winrates[-1] and winrates[0]:
+        if winrates[-1] > winrates[0] + 20:
+            quality_verdict = "多杀能显著提升胜率——你的高光时刻直接转化为胜利。"
+        else:
+            quality_verdict = "多杀与胜率关系不绝对——个人表现好不一定赢，团队配合更重要。"
+    else:
+        quality_verdict = f"共 {total_multi} 场有多杀记录（{multi_rate}%）。"
+
+    return {
+        "labels": labels, "winrates": winrates, "counts": counts, "total_games": total,
+        "penta_loss_games": penta_loss_games, "multi_rate": multi_rate,
+        "penta_total": sum(1 for m in matches if m["penta_kills"] > 0),
+        "summary": f"{quality_verdict}" +
+                   (f" ⚠️ {len(penta_loss_games)} 次五杀仍然落败——个人英雄主义不足以逆天改命。" if penta_loss_games else ""),
+    }
+
+def _analyze_lp_efficiency(matches: list[dict]) -> dict:
+    """LP爬分效率：排位LP净变化/游戏时长 = 实际上分速率。"""
+    ranked = [m for m in matches if m.get("game_queue_id") == 420]
+    if not ranked or len(ranked) < 5:
+        return {"avg_lp_per_hr": 0, "by_champ": [], "by_position": [],
+                "trend_labels": [], "trend_lp_hr": [], "summary": "排位数据不足（需≥5场排位）。"}
+
+    # 需要按时间排序来跟踪LP变化
+    ranked_sorted = sorted(ranked, key=lambda m: m["_dt"] or datetime.min)
+
+    # 计算LP变化
+    lp_changes = []
+    total_lp_change = 0
+    total_hrs = 0
+    for i in range(len(ranked_sorted)):
+        cur = ranked_sorted[i]
+        dur_hrs = cur["game_time_played"] / 3600
+        total_hrs += dur_hrs
+        # 估算LP变化：win≈+20LP, loss≈-18LP（近似）
+        # 如果有相邻对局的LP记录则使用实际值
+        if i < len(ranked_sorted) - 1:
+            nxt = ranked_sorted[i + 1]
+            cur_lp = _total_lp(cur.get("tier", ""), cur.get("league_points", 0))
+            nxt_lp = _total_lp(nxt.get("tier", ""), nxt.get("league_points", 0))
+            if cur_lp is not None and nxt_lp is not None:
+                lp_change = nxt_lp - cur_lp
+                lp_changes.append({"lp": lp_change, "hrs": dur_hrs, "champion": cur["champion_id"],
+                                   "position": cur["position"], "dt": cur["_dt"]})
+
+    # 若无法从LP记录计算，使用胜率估算
+    if not lp_changes:
+        for m in ranked_sorted:
+            dur_hrs = m["game_time_played"] / 3600
+            est_lp = 20 if m["win"] else -18
+            lp_changes.append({"lp": est_lp, "hrs": dur_hrs, "champion": m["champion_id"],
+                               "position": m["position"], "dt": m["_dt"]})
+
+    total_lp_change = sum(lc["lp"] for lc in lp_changes)
+    avg_lp_per_hr = round(total_lp_change / total_hrs, 1) if total_hrs > 0 else 0
+
+    # 按英雄的 LP/小时
+    by_champ: dict[int, list[dict]] = defaultdict(list)
+    for lc in lp_changes:
+        by_champ[lc["champion"]].append(lc)
+    champ_lp = []
+    for cid, changes in by_champ.items():
+        if len(changes) < 3:
+            continue
+        lp_sum = sum(c["lp"] for c in changes)
+        hrs_sum = sum(c["hrs"] for c in changes)
+        lp_hr = round(lp_sum / hrs_sum, 1) if hrs_sum > 0 else 0
+        champ_lp.append({"name": _champion_name(cid), "lp_per_hr": lp_hr, "games": len(changes)})
+    champ_lp.sort(key=lambda x: x["lp_per_hr"], reverse=True)
+
+    # 按位置的 LP/小时
+    by_pos: dict[str, list[dict]] = defaultdict(list)
+    for lc in lp_changes:
+        by_pos[lc["position"]].append(lc)
+    pos_lp = []
+    for pos, changes in by_pos.items():
+        if len(changes) < 3 or pos == "Invalid":
+            continue
+        lp_sum = sum(c["lp"] for c in changes)
+        hrs_sum = sum(c["hrs"] for c in changes)
+        lp_hr = round(lp_sum / hrs_sum, 1) if hrs_sum > 0 else 0
+        pos_lp.append({"name": pos, "lp_per_hr": lp_hr, "games": len(changes)})
+    pos_lp.sort(key=lambda x: x["lp_per_hr"], reverse=True)
+
+    # 滚动 LP 效率趋势（每10场）
+    trend_labels = []
+    trend_lp_hr = []
+    window = min(10, len(lp_changes))
+    for i in range(0, len(lp_changes) - window + 1, max(1, window // 2)):
+        window_data = lp_changes[i:i + window]
+        lp_sum = sum(w["lp"] for w in window_data)
+        hrs_sum = sum(w["hrs"] for w in window_data)
+        lp_hr = round(lp_sum / hrs_sum, 1) if hrs_sum > 0 else 0
+        mid_idx = i + window // 2
+        if mid_idx < len(ranked_sorted) and ranked_sorted[mid_idx]["_dt"]:
+            trend_labels.append(ranked_sorted[mid_idx]["_dt"].strftime("%m/%d"))
+        else:
+            trend_labels.append(f"#{mid_idx + 1}")
+        trend_lp_hr.append(lp_hr)
+
+    if avg_lp_per_hr > 5:
+        verdict = f"LP效率 {avg_lp_per_hr}/小时——上分速度不错，保持这个节奏！"
+    elif avg_lp_per_hr > 0:
+        verdict = f"LP效率 {avg_lp_per_hr}/小时——缓慢上分中，需要提高胜率或缩短对局时长。"
+    elif avg_lp_per_hr > -5:
+        verdict = f"LP效率 {avg_lp_per_hr}/小时——基本在原地踏步，需要突破瓶颈。"
+    else:
+        verdict = f"LP效率 {avg_lp_per_hr}/小时——正在掉分，建议暂停排位调整状态。"
+
+    return {
+        "avg_lp_per_hr": avg_lp_per_hr, "by_champ": champ_lp[:8], "by_position": pos_lp,
+        "trend_labels": trend_labels, "trend_lp_hr": trend_lp_hr,
+        "total_lp_change": total_lp_change, "total_hrs": round(total_hrs, 1),
+        "summary": verdict + f" 共 {len(ranked_sorted)} 场排位，{round(total_hrs, 1)} 小时，净LP变化 {total_lp_change:+}。",
+    }
+
+def _analyze_prime_time_matrix(matches: list[dict]) -> dict:
+    """时间交互热力图：星期×2小时段的胜率二维矩阵（12列，每列2小时）。"""
+    if not matches or len(matches) < 20:
+        return {"cells": [], "day_labels": [], "hour_labels": [],
+                "best_cell": "", "worst_cell": "", "summary": "数据不足（需≥20场）。",
+                "game_cells": []}
+
+    NUM_SLOTS = 12  # 12 个 2 小时段
+    # 构建 7×12 矩阵（每格 2 小时：0-1, 2-3, ..., 22-23）
+    matrix = [[{"wr": 0, "games": 0, "wins": 0} for _ in range(NUM_SLOTS)] for _ in range(7)]
+
+    for m in matches:
+        if not m["_dt"]:
+            continue
+        dow = m["_dt"].weekday()  # 0=Monday
+        hour = m["_dt"].hour
+        slot = hour // 2  # 0→0, 1→0, 2→1, 3→1, ..., 22→11, 23→11
+        cell = matrix[dow][slot]
+        cell["games"] += 1
+        if m["win"]:
+            cell["wins"] += 1
+
+    # 计算胜率
+    for d in range(7):
+        for s in range(NUM_SLOTS):
+            cell = matrix[d][s]
+            if cell["games"] > 0:
+                cell["wr"] = round(cell["wins"] / cell["games"] * 100, 1)
+
+    # 转为前端可用格式
+    cells = []
+    game_cells = []
+    best_wr = -1
+    worst_wr = 101
+    best_cell = ""
+    worst_cell = ""
+    day_labels = _DAYS_CN
+    hour_labels = [f"{h*2}-{h*2+1}" for h in range(NUM_SLOTS)]
+
+    for d in range(7):
+        for s in range(NUM_SLOTS):
+            cell = matrix[d][s]
+            if cell["games"] >= 3:
+                cells.append({"day": d, "hour": s, "wr": cell["wr"], "games": cell["games"]})
+                if cell["wr"] > best_wr:
+                    best_wr = cell["wr"]
+                    best_cell = f"{day_labels[d]} {hour_labels[s]} ({cell['wr']}%, {cell['games']}场)"
+                if cell["wr"] < worst_wr:
+                    worst_wr = cell["wr"]
+                    worst_cell = f"{day_labels[d]} {hour_labels[s]} ({cell['wr']}%, {cell['games']}场)"
+            if cell["games"] > 0:
+                game_cells.append({"day": d, "hour": s, "games": cell["games"]})
+
+    return {
+        "cells": cells, "game_cells": game_cells,
+        "day_labels": day_labels, "hour_labels": hour_labels,
+        "best_cell": best_cell, "worst_cell": worst_cell,
+        "total_cells": len(cells),
+        "summary": f"🏆 最佳时段: {best_cell} | 💀 最差时段: {worst_cell}" +
+                   (f"。共 {len(cells)} 个有效时段（≥3场）" if cells else "。注意：空白单元格表示数据不足（<3场）。"),
+    }
 
 # ── HTML 生成 ────────────────────────────────────────────────────────────────
 
 def _chart_json(data) -> str:
     return json.dumps(data, ensure_ascii=False, default=str)
-
 
 def _build_css() -> str:
     return """
@@ -1654,7 +2318,7 @@ main{max-width:1280px;margin:0 auto;padding:24px 20px 60px}
 .chart-card:hover{border-color:var(--gold)}
 .chart-card h3{font-size:15px;font-weight:600;color:var(--text);margin-bottom:4px}
 .chart-card .chart-wrap{position:relative;width:100%;margin:12px 0}
-.chart-card .chart-wrap canvas{width:100%!important}
+.chart-card .chart-wrap canvas{display:block;width:100%!important;height:100%!important}
 .chart-card .summary{font-size:13px;color:var(--gold);font-style:italic;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);line-height:1.7}
 .chart-card .summary.na{color:var(--text3)}
 .chart-card.full{grid-column:1/-1}
@@ -1669,21 +2333,17 @@ footer span{color:var(--gold)}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 """
 
-
 def _build_nav() -> str:
     items = [
         ("#overview", "\U0001f4ca 总览"),
-        ("#temporal", "\U0001f52e 胜率分析"),
-        ("#champion", "\U0001f3c6 英雄分析"),
-        ("#rank", "\U0001f4c8 段位分析"),
-        ("#attendance", "\U0001f4c5 出勤分析"),
-        ("#session", "\U0001f3ae 游戏Session"),
-        ("#psychology", "\U0001f9e0 心理分析"),
-        ("#performance", "\U0001f4b0 效率分析"),
+        ("#winrate", "\U0001f52e 胜率因子"),
+        ("#game-rhythm", "\U0001f3ae 游戏节奏"),
+        ("#psychology", "\U0001f9e0 游戏心理"),
+        ("#player-level", "\U0001f4c8 玩家水平"),
+        ("#attendance", "\U0001f4c5 出勤日历"),
     ]
     links = "".join(f'<a href="{href}">{label}</a>' for href, label in items)
     return f'<nav><span class="logo">⚔️ LOLhistory</span>{links}</nav>'
-
 
 def _build_hero(ov: dict) -> str:
     rating = ov.get("overall_rating", "")
@@ -1700,18 +2360,18 @@ def _build_hero(ov: dict) -> str:
         ("总 SVP", ov.get("total_svps", 0), ""),
         ("五杀次数", ov.get("total_penta", 0), ""),
         ("四杀次数", ov.get("total_quadra", 0), ""),
-        ("场均评分", ov.get("avg_score", 0), ""),
+        ("最长连胜", f"{ov.get('longest_win_streak', 0)}局", ""),
         ("出勤率", f"{ov.get('attendance', 0)}%", ""),
+        ("出勤天数", ov.get("days_active", 0), ""),
+        ("英雄池", f"{ov.get('hero_pool', 0)}", ""),
+        ("招牌英雄", ov.get("most_played_champ_name", ""), ""),
         ("最高段位", ov.get("highest_tier", "无"), ""),
         ("当前段位", ov.get("current_tier", "无"), ""),
-        ("独特英雄", ov.get("unique_champions", 0), ""),
-        ("招牌英雄", ov.get("most_played_champ_name", ""), ""),
     ]
     html_cards = ""
     for label, value, cls in cards:
         html_cards += f'<div class="hero-card {cls}"><div class="value">{value}</div><div class="label">{label}</div></div>'
     return f'<section id="overview">{rating_html}<div class="hero">{html_cards}</div></section>'
-
 
 def _chart_card(title: str, chart_id: str, summary: str, full_width: bool = False) -> str:
     cls = "chart-card full" if full_width else "chart-card"
@@ -1723,157 +2383,181 @@ def _chart_card(title: str, chart_id: str, summary: str, full_width: bool = Fals
 <p class="{summary_cls}">{summary}</p>
 </div>"""
 
-
-def _build_section_temporal(r: dict) -> str:
+def _build_section_winrate(r: dict) -> str:
+    """胜率因子分析 — 报告第1章（总览之后）。"""
+    mystery = r.get("mystery_factor", {})
     day = r.get("win_rate_by_day", {})
     hour = r.get("win_rate_by_hour", {})
     side = r.get("win_rate_by_side", {})
     pos = r.get("win_rate_by_position", {})
     lp_r = r.get("win_rate_by_lp", {})
     dur = r.get("win_rate_by_duration", {})
-    mystery = r.get("mystery_factor", {})
     honors = r.get("honors_impact", {})
     cards = [
         _chart_card("📅 星期几胜率", "chart-day", day.get("summary", "")),
-        _chart_card("🕐 游戏时段胜率", "chart-hour", hour.get("summary", "")),
-        _chart_card("🔴🔵 红蓝方胜率", "chart-side", side.get("summary", "")),
+        _chart_card("🕐 时段胜率", "chart-hour", hour.get("summary", "")),
+        _chart_card("🔵 红蓝方胜率", "chart-side", side.get("summary", "")),
         _chart_card("🎯 位置胜率", "chart-position", pos.get("summary", "")),
-        _chart_card("📊 LP区间胜率", "chart-lp-range", lp_r.get("summary", "")),
         _chart_card("⏱️ 对局时长胜率", "chart-duration", dur.get("summary", "")),
+        _chart_card("📊 LP区间胜率", "chart-lp-range", lp_r.get("summary", "")),
         _chart_card("🔮 胜率极差排名", "chart-mystery", mystery.get("summary", ""), True),
         _chart_card("🏅 荣誉与胜率", "chart-honors", honors.get("summary", ""), True),
     ]
-    return f'<section id="temporal" class="section"><div class="section-title">🔮 胜率分析</div><div class="chart-grid">{"".join(cards)}</div></section>'
+    return f'<section id="winrate" class="section"><div class="section-title">🔮 胜率因子</div><div class="section-subtitle">多维度下钻胜率，定位影响你上分的关键因子</div><div class="chart-grid">{"".join(cards)}</div></section>'
 
+def _build_section_game_rhythm(r: dict) -> str:
+    """游戏节奏 — 报告第3章。"""
+    sess = r.get("sessions", {})
+    omg = r.get("one_more_game", {})
+    tilt = r.get("tilt", {})
 
-def _build_section_champion(r: dict) -> str:
-    radar = r.get("champion_radar", {})
+    # 游戏轮次规模分布（双列）
+    size_card = f"""<div class="chart-card">
+    <h3>📏 游戏轮次规模分布</h3>
+    <p style="font-size:12px;color:#5a6575;margin-bottom:8px">相邻对局间隔≤2小时的连续游戏序列</p>
+    <div class="chart-wrap"><canvas id="chart-session-size"></canvas></div>
+    <p class="summary">{sess.get("size_summary", "")}</p>
+    </div>"""
+
+    # 轮次首局开始时间分布
+    first_hour_summary = ""
+    if sess.get("first_hour_counts"):
+        first_peak_hour = max(range(24), key=lambda h: sess["first_hour_counts"][h]) if any(sess["first_hour_counts"]) else 0
+        first_hour_summary = f"首局最常在 {first_peak_hour}:00-{first_peak_hour}:59 时段开始——这是你'开张'的高频时段。"
+
+    # 轮次末局结束时间分布
+    last_hour_summary = ""
+    if sess.get("last_hour_counts"):
+        peak_hour = max(range(24), key=lambda h: sess["last_hour_counts"][h]) if any(sess["last_hour_counts"]) else 0
+        last_hour_summary = f"游戏轮次最常在 {peak_hour}:00-{peak_hour}:59 时段结束——这是你'收工'的高峰时段。"
+
+    cards = [
+        size_card,
+        _chart_card("🌅 轮次首局开始时间分布", "chart-session-first-hour", first_hour_summary),
+        _chart_card("🌙 轮次末局结束时间分布", "chart-session-last-hour", last_hour_summary),
+        _chart_card("📈 轮次内第N局胜率", "chart-session-pos", sess.get("pos_summary", "")),
+        _chart_card("🎰 '再来一局'陷阱", "chart-one-more", omg.get("summary", "")),
+        _chart_card("🎢 输后与赢后胜率", "chart-tilt", tilt.get("summary", "")),
+    ]
+    return f'<section id="game-rhythm" class="section"><div class="section-title">🎮 游戏节奏</div><div class="section-subtitle">游戏轮次模式、连续对局行为与胜率转移规律</div><div class="chart-grid">{"".join(cards)}</div></section>'
+
+def _build_section_psychology(r: dict) -> str:
+    """游戏心理 — 报告第4章。"""
+    streaks = r.get("streaks", {})
+    consistency = r.get("consistency", {})
+    boom = r.get("boomerang_effect", {})
+
+    cards = [
+        _chart_card("🔥 胜负连势分析", "chart-streaks", streaks.get("summary", "")),
+        _chart_card("📊 发挥稳定性", "chart-consistency", consistency.get("summary", "")),
+        _chart_card("🚫 挂机影响", "chart-afk", r.get("afk_impact", {}).get("summary", "")),
+        _chart_card("🏳️ 投降分析", "chart-surrender", r.get("surrender", {}).get("summary", "")),
+        _chart_card("🪃 过度自信与救赎效应", "chart-boomerang", boom.get("summary", ""), True),
+    ]
+    return f'<section id="psychology" class="section"><div class="section-title">🧠 游戏心理</div><div class="section-subtitle">心态波动、情绪韧性与行为模式深度剖析</div><div class="chart-grid">{"".join(cards)}</div></section>'
+
+def _build_section_player_level(r: dict) -> str:
+    """玩家水平 — 报告第5章。"""
     pool = r.get("champion_pool", {})
+    radar = r.get("champion_radar", {})
+    lp = r.get("lp_efficiency", {})
+    mk = r.get("multi_kill_impact", {})
+    cp = r.get("carry_profile", {})
+    gold = r.get("gold_efficiency", {})
+
+    # LP效率卡片（含英雄柱状图）
+    lp_card = f"""<div class="chart-card">
+    <h3>📈 LP爬分效率</h3>
+    <div class="chart-wrap"><canvas id="chart-lp-by-champ"></canvas></div>
+    <p class="summary">{lp.get('summary', '')}</p>
+    </div>"""
+
     cards = [
-        _chart_card("🎯 拿手英雄雷达", "chart-radar", radar.get("summary", ""), True),
         _chart_card("📚 英雄池分布", "chart-pool", pool.get("summary", ""), True),
+        _chart_card("🎯 拿手英雄雷达", "chart-radar", radar.get("summary", ""), True),
+        lp_card,
+        _chart_card("⚔️ 多杀含金量", "chart-multikill", mk.get("summary", "")),
+        _chart_card("🎭 Carry依赖度画像", "chart-carry-profile", cp.get("summary", ""), True),
+        _chart_card("💰 经济效率分析", "chart-gpm", gold.get("summary", ""), True),
     ]
-    return f'<section id="champion" class="section"><div class="section-title">🏆 英雄分析</div><div class="chart-grid">{"".join(cards)}</div></section>'
-
-
-def _build_section_rank(r: dict) -> str:
-    rp = r.get("rank_progression", {})
-    rolling_summary = rp.get("rolling_summary", "")
-    if not rolling_summary and rp.get("rolling_wr"):
-        rw = rp["rolling_wr"]
-        recent_avg = round(sum(rw[-10:]) / min(len(rw), 10), 1) if rw else 0
-        trend = "上升" if len(rw) >= 20 and sum(rw[-10:]) > sum(rw[:10]) else ("下降" if len(rw) >= 20 and sum(rw[-10:]) < sum(rw[:10]) else "稳定")
-        rolling_summary = f"近10场滚动胜率均值 {recent_avg}%，近期趋势{trend}。滚动胜率持续高于50%是上分的关键信号。"
-    cards = [
-        _chart_card("📈 段位LP趋势", "chart-lp", rp.get("summary", ""), True),
-        _chart_card("📉 10场滚动胜率", "chart-rolling-wr", rolling_summary, True),
-    ]
-    return f'<section id="rank" class="section"><div class="section-title">📈 段位分析</div><div class="chart-grid">{"".join(cards)}</div></section>'
-
+    cards_html = "".join(c for c in cards if c)
+    return f'<section id="player-level" class="section"><div class="section-title">📈 玩家水平</div><div class="section-subtitle">英雄池深度、个人能力画像与经济转化效率</div><div class="chart-grid">{cards_html}</div></section>'
 
 def _build_section_attendance(r: dict) -> str:
+    """出勤日历 — 报告第6章。"""
     att = r.get("attendance", {})
-    summary = att.get("summary", "")
+    rp = r.get("rank_progression", {})
+    pt = r.get("prime_time_matrix", {})
+
+    # ── 关键日期指标卡片 ──
     best = att.get("best_day")
     worst = att.get("worst_day")
     most_t = att.get("most_time_day")
     most_g = att.get("most_gain_day")
     most_l = att.get("most_loss_day")
     most_h = att.get("most_honors_day")
-    key_days = ""
+    key_cards_html = ""
     if best:
-        key_days += f'<div class="stat-item"><span class="sv">🏆 胜率最高日</span><span class="sl">{best["date"]} — {best["win_rate"]}% ({best["wins"]}W{best["losses"]}L, {best["games"]}场)</span></div>'
+        key_cards_html += f'<div class="hero-card win"><div class="value">{best["win_rate"]}%</div><div class="label">🏆 胜率最高日<br>{best["date"]}<br>{best["wins"]}W{best["losses"]}L · {best["games"]}场</div></div>'
     if worst:
-        key_days += f'<div class="stat-item"><span class="sv">💔 胜率最低日</span><span class="sl">{worst["date"]} — {worst["win_rate"]}% ({worst["wins"]}W{worst["losses"]}L, {worst["games"]}场)</span></div>'
+        key_cards_html += f'<div class="hero-card loss"><div class="value">{worst["win_rate"]}%</div><div class="label">💔 胜率最低日<br>{worst["date"]}<br>{worst["wins"]}W{worst["losses"]}L · {worst["games"]}场</div></div>'
     if most_t:
-        key_days += f'<div class="stat-item"><span class="sv">⏰ 最长游戏日</span><span class="sl">{most_t["date"]} — {most_t["total_time_min"]} 分钟 ({most_t["games"]}场)</span></div>'
+        key_cards_html += f'<div class="hero-card"><div class="value">{most_t["total_time_min"]}min</div><div class="label">⏰ 最长游戏日<br>{most_t["date"]}<br>{most_t["games"]}场</div></div>'
     if most_g:
-        key_days += f'<div class="stat-item"><span class="sv">📈 上分最多日</span><span class="sl">{most_g["date"]} — LP +{most_g["lp_change"]} ({most_g["games"]}场)</span></div>'
+        key_cards_html += f'<div class="hero-card win"><div class="value">+{most_g["lp_change"]}</div><div class="label">📈 上分最多日<br>{most_g["date"]}<br>{most_g["games"]}场</div></div>'
     if most_l:
-        key_days += f'<div class="stat-item"><span class="sv">📉 掉分最多日</span><span class="sl">{most_l["date"]} — LP {most_l["lp_change"]} ({most_l["games"]}场)</span></div>'
+        key_cards_html += f'<div class="hero-card loss"><div class="value">{most_l["lp_change"]}</div><div class="label">📉 掉分最多日<br>{most_l["date"]}<br>{most_l["games"]}场</div></div>'
     if most_h:
-        key_days += f'<div class="stat-item"><span class="sv">🏅 最多荣誉日</span><span class="sl">{most_h["date"]} — {most_h["games"]}场，多项荣誉加身</span></div>'
-    cards = [
-        _chart_card("📅 出勤日历热力图", "chart-cal-heatmap", summary, True),
-    ]
-    if key_days:
-        cards.insert(0, f'<div class="chart-card full"><h3>🗓️ 关键日期</h3><p style="color:#8b95a5;font-size:12px;margin-bottom:8px">（仅统计 ≥3 场的日期）</p><div class="stat-row">{key_days}</div></div>')
+        key_cards_html += f'<div class="hero-card"><div class="value">{most_h["games"]}场</div><div class="label">🏅 最多荣誉日<br>{most_h["date"]}<br>多项荣誉加身</div></div>'
+
+    # 滚动胜率概要
+    rolling_summary = rp.get("rolling_summary", "")
+    if not rolling_summary and rp.get("rolling_wr"):
+        rw = rp["rolling_wr"]
+        recent_avg = round(sum(rw[-10:]) / min(len(rw), 10), 1) if rw else 0
+        trend = "上升" if len(rw) >= 20 and sum(rw[-10:]) > sum(rw[:10]) else ("下降" if len(rw) >= 20 and sum(rw[-10:]) < sum(rw[:10]) else "稳定")
+        rolling_summary = f"近10场滚动胜率均值 {recent_avg}%，近期趋势{trend}。滚动胜率持续高于50%是上分的关键信号。"
+
+    # LP变化概要
     lp_days = [d for d in att.get("days", []) if d["lp_change"] != 0]
     lp_summary = ""
     if lp_days:
         gain_days = sum(1 for d in lp_days if d["lp_change"] > 0)
         loss_days = sum(1 for d in lp_days if d["lp_change"] < 0)
         lp_summary = f"{len(lp_days)} 天有LP变化：{gain_days} 天上涨，{loss_days} 天下跌。绿色柱=上分日，红色柱=掉分日。"
-    cards.append(_chart_card("📊 每日 LP 变化", "chart-daily-lp", lp_summary, True))
-    return f'<section id="attendance" class="section"><div class="section-title">📅 出勤分析</div><div class="chart-grid">{"".join(cards)}</div></section>'
 
+    cards = []
+    if key_cards_html:
+        cards.append(f'<div class="chart-card full"><h3>🗓️ 关键日期</h3><p style="color:#8b95a5;font-size:12px;margin-bottom:8px">（仅统计 ≥3 场的日期）</p><div class="hero">{key_cards_html}</div></div>')
 
-def _build_section_session(r: dict) -> str:
-    sess = r.get("sessions", {})
-    # 生成缺失的点评
-    hour_summary = ""
-    if sess.get("hour_counts"):
-        peak_hour = max(range(24), key=lambda h: sess["hour_counts"][h]) if any(sess["hour_counts"]) else 0
-        hour_summary = f"Session 最常在 {peak_hour}:00 左右结束——这是你'收工'的高峰时段。合理安排游戏时间，避免深夜连续作战。"
-    first_last_summary = ""
-    fw = sess.get("first_wr", 0)
-    lw = sess.get("last_wr", 0)
-    if fw or lw:
-        diff = round(lw - fw, 1)
-        if diff > 5:
-            first_last_summary = f"首局胜率 {fw}% → 末局 {lw}%，越打越热！需要热身才能进入最佳状态。"
-        elif diff < -5:
-            first_last_summary = f"首局胜率 {fw}% → 末局 {lw}%，注意力随局数衰减——见好就收是智慧。"
-        else:
-            first_last_summary = f"首局 ({fw}%) 与末局 ({lw}%) 胜率稳定，状态保持力强。"
-    cards = [
-        _chart_card("📏 游戏轮次规模分布", "chart-session-size", sess.get("summary", "")),
-        _chart_card("🌙 最后一局结束时间分布", "chart-session-hour", hour_summary),
-        _chart_card("🎬 首局 vs 末局胜率", "chart-session-wr", first_last_summary),
-        _chart_card("📈 轮次内第N局胜率", "chart-session-pos", sess.get("pos_summary", "")),
-    ]
-    return f'<section id="session" class="section"><div class="section-title">🎮 连续游戏分析</div><div class="chart-grid">{"".join(cards)}</div></section>'
+    cards.append(_chart_card("📅 出勤日历热力图", "chart-cal-heatmap", att.get("summary", ""), True))
+    cards.append(_chart_card("📉 10场滚动胜率", "chart-rolling-wr", rolling_summary, True))
 
+    if pt.get("cells"):
+        cards.append(f"""<div class="chart-card full">
+    <h3>🗺️ 游戏时段热力图（胜率）</h3>
+    <p style="font-size:12px;color:#5a6575;margin-bottom:8px">行=星期, 列=每2小时段. 颜色=胜率(绿高红低). 空白=数据不足(&lt;3场).</p>
+    <div id="heatmap-prime-time" style="overflow-x:auto"></div>
+    <p class="summary">{pt.get('summary', '')}</p>
+    </div>""")
+    if pt.get("game_cells"):
+        cards.append(f"""<div class="chart-card full">
+    <h3>📊 对局数量热力图</h3>
+    <p style="font-size:12px;color:#5a6575;margin-bottom:8px">行=星期, 列=每2小时段. 颜色深浅=对局数量. 空白=无对局.</p>
+    <div id="heatmap-game-count" style="overflow-x:auto"></div>
+    <p class="summary">展示各时段的对局频次分布，颜色越深表示该时段对局越多。</p>
+    </div>""")
 
-def _build_section_psychology(r: dict) -> str:
-    tilt = r.get("tilt", {})
-    streaks = r.get("streaks", {})
-    comebacks = r.get("comebacks", {})
-    carry = r.get("carry", {})
-    supp = r.get("support_carry", {})
-    early = r.get("early_vs_late", {})
-    consistency = r.get("consistency", {})
-    cards = [
-        _chart_card("🎢 心态影响：输后 vs 赢后胜率", "chart-tilt", tilt.get("summary", "")),
-        _chart_card("🔥 连势分析", "chart-streaks", streaks.get("summary", "")),
-        _chart_card("🛡️ 抗压分析：承伤最多却赢了", "chart-comebacks", comebacks.get("summary", "")),
-        _chart_card("⚡ 硬Carry分析", "chart-carry", carry.get("summary", "")),
-        _chart_card("🤝 助攻王胜率", "chart-support", supp.get("summary", "")),
-        _chart_card("⏳ 前期 vs 后期", "chart-earlylate", early.get("summary", "")),
-        _chart_card("📊 发挥稳定性", "chart-consistency", consistency.get("summary", "")),
-        _chart_card("📅 周节奏", "chart-weekly", r.get("weekly_rhythm", {}).get("summary", "")),
-        _chart_card("🔄 位置灵活性", "chart-flex", r.get("position_flexibility", {}).get("summary", "")),
-        _chart_card("🏳️ 投降分析", "chart-surrender", r.get("surrender", {}).get("summary", "")),
-        _chart_card("🚫 挂机影响", "chart-afk", r.get("afk_impact", {}).get("summary", "")),
-    ]
-    return f'<section id="psychology" class="section"><div class="section-title">🧠 心理与风格分析</div><div class="chart-grid">{"".join(cards)}</div></section>'
+    cards.append(_chart_card("📈 段位LP趋势", "chart-lp", rp.get("summary", ""), True))
+    cards.append(_chart_card("📊 每日LP变化", "chart-daily-lp", lp_summary, True))
 
-
-def _build_section_performance(r: dict) -> str:
-    gold = r.get("gold_efficiency", {})
-    cards = [
-        _chart_card("💰 经济效率：GPM vs 对局时长", "chart-gpm", gold.get("summary", ""), True),
-    ]
-    return f'<section id="performance" class="section"><div class="section-title">💰 经济效率分析</div><div class="chart-grid">{"".join(cards)}</div></section>'
-
+    return f'<section id="attendance" class="section"><div class="section-title">📅 出勤日历</div><div class="section-subtitle">游戏习惯、活跃时段与段位变化全景</div><div class="chart-grid">{"".join(cards)}</div></section>'
 
 def _build_footer(games: int, export_time: str) -> str:
     return f"""<footer>
 <p>由 <span>LOLhistory</span> 生成 · 共 {games} 场对局 · 导出时间 {export_time}</p>
 <p style="margin-top:4px;font-size:11px">所有数据来源于 WeGame API，仅供个人参考。图表由 Chart.js 驱动。</p>
 </footer>"""
-
-
 
 # ── Chart.js 配置 ────────────────────────────────────────────────────────────
 
@@ -2054,7 +2738,7 @@ def _build_all_charts(r: dict) -> str:
     parts.append(f"""new Chart(document.getElementById('chart-radar'),{{
   type:'radar',
   data:{{labels:{_chart_json(dims_radar)},datasets:{_chart_json(radar_datasets)}}},
-  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:1.5,
+  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2.2,
     plugins:{{legend:{{labels:{{color:'#8b95a5'}}}}}},
     scales:{{r:{{min:0,max:100,ticks:{{color:'#8b95a5',backdropColor:'transparent'}},grid:{{color:'#2a3a4a'}},pointLabels:{{color:'#8b95a5'}}}}}}
   }}
@@ -2129,16 +2813,27 @@ def _build_all_charts(r: dict) -> str:
   data:{{labels:{_chart_json(sess.get('size_labels',[]))},
     datasets:[{{label:'次数',data:{_chart_json(sess.get('size_counts',[]))},backgroundColor:'rgba(74,158,255,0.7)',borderColor:'#4a9eff',borderWidth:1}}]
   }},
-  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2,plugins:{{legend:{{display:false}}}},
+  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:3.5,plugins:{{legend:{{display:false}}}},
     scales:{{y:{{ticks:{{color:'#8b95a5',stepSize:1}},grid:{{color:'#2a3a4a'}},title:{{display:true,text:'次数',color:'#8b95a5'}}}},x:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}},title:{{display:true,text:'每轮游戏局数',color:'#8b95a5'}}}}}}
   }}
 }});""")
 
-    # Session 结束时间
-    parts.append(f"""new Chart(document.getElementById('chart-session-hour'),{{
+    # Session 首局开始时间
+    parts.append(f"""new Chart(document.getElementById('chart-session-first-hour'),{{
   type:'bar',
-  data:{{labels:{_chart_json(sess.get('hour_labels',[]))},
-    datasets:[{{label:'次数',data:{_chart_json(sess.get('hour_counts',[]))},backgroundColor:'rgba(168,85,247,0.7)',borderColor:'#a855f7',borderWidth:1}}]
+  data:{{labels:{_chart_json(sess.get('first_hour_labels',[]))},
+    datasets:[{{label:'次数',data:{_chart_json(sess.get('first_hour_counts',[]))},backgroundColor:'rgba(245,158,11,0.7)',borderColor:'#f59e0b',borderWidth:1}}]
+  }},
+  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2,plugins:{{legend:{{display:false}}}},
+    scales:{{y:{{ticks:{{color:'#8b95a5',stepSize:1}},grid:{{color:'#2a3a4a'}},title:{{display:true,text:'次数',color:'#8b95a5'}}}},x:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}}}}
+  }}
+}});""")
+
+    # Session 末局结束时间
+    parts.append(f"""new Chart(document.getElementById('chart-session-last-hour'),{{
+  type:'bar',
+  data:{{labels:{_chart_json(sess.get('last_hour_labels',[]))},
+    datasets:[{{label:'次数',data:{_chart_json(sess.get('last_hour_counts',[]))},backgroundColor:'rgba(168,85,247,0.7)',borderColor:'#a855f7',borderWidth:1}}]
   }},
   options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2,plugins:{{legend:{{display:false}}}},
     scales:{{y:{{ticks:{{color:'#8b95a5',stepSize:1}},grid:{{color:'#2a3a4a'}},title:{{display:true,text:'次数',color:'#8b95a5'}}}},x:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}}}}
@@ -2162,17 +2857,6 @@ def _build_all_charts(r: dict) -> str:
   }}
 }});""")
 
-    # Session 首末局胜率
-    parts.append(f"""new Chart(document.getElementById('chart-session-wr'),{{
-  type:'bar',
-  data:{{labels:['首局','末局'],
-    datasets:[{{label:'胜率 %',data:{_chart_json([sess.get('first_wr',0),sess.get('last_wr',0)])},backgroundColor:['rgba(74,158,255,0.7)','rgba(245,158,11,0.7)'],borderColor:['#4a9eff','#f59e0b'],borderWidth:1}}]
-  }},
-  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2,plugins:{{legend:{{display:false}}}},
-    scales:{{y:{{max:100,ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}},x:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}}}}
-  }}
-}});""")
-
     # Session 内第N局胜率
     pos_labels_s = sess.get("pos_labels", [])
     pos_wr_s = sess.get("pos_wr", [])
@@ -2193,15 +2877,21 @@ def _build_all_charts(r: dict) -> str:
     aw = tilt.get("after_win") or {}
     al = tilt.get("after_loss") or {}
     a2 = tilt.get("after_2loss") or {}
+    a2w = tilt.get("after_2win") or {}
     tilt_labels = ["赢后", "输后"]
     tilt_data = [aw.get("wr", 0), al.get("wr", 0)]
     tilt_colors = ['rgba(46,204,113,0.7)', 'rgba(231,76,60,0.7)']
     tilt_borders = ['#2ecc71', '#e74c3c']
+    if a2w:
+        tilt_labels.append("连赢2局后")
+        tilt_data.append(a2w.get("wr", 0))
+        tilt_colors.append('rgba(46,204,113,0.9)')
+        tilt_borders.append('#1ea853')
     if a2:
         tilt_labels.append("连输2局后")
         tilt_data.append(a2.get("wr", 0))
-        tilt_colors.append('rgba(155,89,182,0.7)')
-        tilt_borders.append('#9b59b6')
+        tilt_colors.append('rgba(231,76,60,0.9)')
+        tilt_borders.append('#c0392b')
     parts.append(f"""new Chart(document.getElementById('chart-tilt'),{{
   type:'bar',
   data:{{labels:{_chart_json(tilt_labels)},
@@ -2224,14 +2914,6 @@ def _build_all_charts(r: dict) -> str:
     all_len = sorted(set(wl + ll_len))
     w_fill = [wc[wl.index(l)] if l in wl else 0 for l in all_len]
     l_fill = [lc[ll_len.index(l)] if l in ll_len else 0 for l in all_len]
-    lw = streaks.get("longest_win")
-    ll = streaks.get("longest_loss")
-    streak_title = streaks.get("summary", "")[:80]
-    if lw:
-        streak_title += f" | 最长连胜: {lw['length']}局"
-    if ll:
-        streak_title += f" | 最长连败: {ll['length']}局"
-
     parts.append(f"""new Chart(document.getElementById('chart-streaks'),{{
   type:'bar',
   data:{{labels:{_chart_json([str(l)+'局' for l in all_len])},
@@ -2241,58 +2923,8 @@ def _build_all_charts(r: dict) -> str:
     ]
   }},
   options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2,
-    plugins:{{legend:{{labels:{{color:'#8b95a5'}}}},title:{{display:true,text:{_chart_json(streak_title)},color:'#c8aa6e',font:{{size:11}}}}}},
+    plugins:{{legend:{{labels:{{color:'#8b95a5'}}}}}},
     scales:{{y:{{ticks:{{color:'#8b95a5',stepSize:1}},grid:{{color:'#2a3a4a'}}}},x:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}}}}
-  }}
-}});""")
-
-    # Comebacks
-    comebacks = r.get("comebacks", {})
-    parts.append(f"""new Chart(document.getElementById('chart-comebacks'),{{
-  type:'bar',
-  data:{{labels:['承伤最多','非承伤最多'],
-    datasets:[{{label:'胜率 %',data:[{comebacks.get('taken_wr',0)},{comebacks.get('not_wr',0)}],backgroundColor:['rgba(155,89,182,0.7)','rgba(149,165,166,0.7)'],borderColor:['#9b59b6','#95a5a6'],borderWidth:1}}]
-  }},
-  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2,plugins:{{legend:{{display:false}}}},
-    scales:{{y:{{max:100,ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}},x:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}}}}
-  }}
-}});""")
-
-    # Carry
-    carry = r.get("carry", {})
-    parts.append(f"""new Chart(document.getElementById('chart-carry'),{{
-  type:'bar',
-  data:{{labels:['硬Carry','非Carry'],
-    datasets:[{{label:'胜率 %',data:[{carry.get('carry_wr',0)},{carry.get('non_wr',0)}],backgroundColor:['rgba(241,196,15,0.7)','rgba(149,165,166,0.7)'],borderColor:['#f1c40f','#95a5a6'],borderWidth:1}}]
-  }},
-  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2,plugins:{{legend:{{display:false}}}},
-    scales:{{y:{{max:100,ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}},x:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}}}}
-  }}
-}});""")
-
-    # Support carry
-    supp = r.get("support_carry", {})
-    parts.append(f"""new Chart(document.getElementById('chart-support'),{{
-  type:'bar',
-  data:{{labels:['助攻最多','非助攻最多'],
-    datasets:[{{label:'胜率 %',data:[{supp.get('assist_wr',0)},{supp.get('non_wr',0)}],backgroundColor:['rgba(20,184,166,0.7)','rgba(149,165,166,0.7)'],borderColor:['#14b8a6','#95a5a6'],borderWidth:1}}]
-  }},
-  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2,plugins:{{legend:{{display:false}}}},
-    scales:{{y:{{max:100,ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}},x:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}}}}
-  }}
-}});""")
-
-    # 前期 vs 后期
-    early = r.get("early_vs_late", {})
-    qs = early.get("quartiles", [])
-    n_qs = len(qs)
-    parts.append(f"""new Chart(document.getElementById('chart-earlylate'),{{
-  type:'bar',
-  data:{{labels:{_chart_json([q['label'] for q in qs])},
-    datasets:[{{label:'胜率 %',data:{_chart_json([q['win_rate'] for q in qs])},backgroundColor:{_chart_json([_CHART_COLORS[i%10] for i in range(n_qs)])},borderColor:{_chart_json([_CHART_BORDERS[i%10] for i in range(n_qs)])},borderWidth:1}}]
-  }},
-  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2,plugins:{{legend:{{display:false}}}},
-    scales:{{y:{{max:100,ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}},title:{{display:true,text:'胜率 %',color:'#8b95a5'}}}},x:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}}}}
   }}
 }});""")
 
@@ -2306,36 +2938,6 @@ def _build_all_charts(r: dict) -> str:
   }},
   options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2,plugins:{{legend:{{display:false}}}},
     scales:{{y:{{ticks:{{color:'#8b95a5',stepSize:1}},grid:{{color:'#2a3a4a'}},title:{{display:true,text:'场次',color:'#8b95a5'}}}},x:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}},title:{{display:true,text:'KDA',color:'#8b95a5'}}}}}}
-  }}
-}});""")
-
-    # 周节奏
-    weekly = r.get("weekly_rhythm", {})
-    parts.append(f"""new Chart(document.getElementById('chart-weekly'),{{
-  type:'bar',
-  data:{{labels:{_chart_json(weekly.get('labels',[]))},
-    datasets:[
-      {{label:'场次',data:{_chart_json(weekly.get('games',[]))},backgroundColor:'rgba(74,158,255,0.7)',borderColor:'#4a9eff',borderWidth:1,yAxisID:'y'}},
-      {{label:'胜率 %',data:{_chart_json(weekly.get('win_rates',[]))},borderColor:'#f59e0b',backgroundColor:'rgba(245,158,11,0.1)',type:'line',tension:0.3,yAxisID:'y1'}}
-    ]
-  }},
-  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2,
-    plugins:{{legend:{{labels:{{color:'#8b95a5'}}}}}},
-    scales:{{y:{{type:'linear',position:'left',title:{{display:true,text:'场次',color:'#8b95a5'}},ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}},y1:{{type:'linear',position:'right',max:100,title:{{display:true,text:'胜率 %',color:'#8b95a5'}},ticks:{{color:'#8b95a5'}},grid:{{display:false}}}},x:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}}}}
-  }}
-}});""")
-
-    # 位置灵活性
-    flex = r.get("position_flexibility", {})
-    roles = flex.get("roles", [])
-    flex_colors = ["rgba(46,204,113,0.7)" if ro["is_main"] else "rgba(74,158,255,0.7)" for ro in roles]
-    parts.append(f"""new Chart(document.getElementById('chart-flex'),{{
-  type:'bar',
-  data:{{labels:{_chart_json([ro['position'] for ro in roles])},
-    datasets:[{{label:'胜率 %',data:{_chart_json([ro['win_rate'] for ro in roles])},backgroundColor:{_chart_json(flex_colors)},borderWidth:1}}]
-  }},
-  options:{{indexAxis:'y',responsive:true,maintainAspectRatio:true,aspectRatio:2,plugins:{{legend:{{display:false}}}},
-    scales:{{x:{{max:100,ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}},y:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}}}}
   }}
 }});""")
 
@@ -2383,6 +2985,189 @@ def _build_all_charts(r: dict) -> str:
   }}
 }});""")
 
+    # 过度自信与救赎效应散点图
+    boom = r.get("boomerang_effect", {})
+    parts.append(f"""new Chart(document.getElementById('chart-boomerang'),{{
+  type:'scatter',
+  data:{{datasets:[
+    {{label:'MVP后下一局',data:{_chart_json(boom.get('scatter_mvp',[]))},backgroundColor:'rgba(245,158,11,0.6)',borderColor:'#f59e0b',pointRadius:4}},
+    {{label:'SVP/惨败后下一局',data:{_chart_json(boom.get('scatter_svp',[]))},backgroundColor:'rgba(231,76,60,0.6)',borderColor:'#e74c3c',pointRadius:4}},
+    {{label:'普通对局后',data:{_chart_json(boom.get('scatter_normal',[]))},backgroundColor:'rgba(149,165,166,0.4)',borderColor:'#95a5a6',pointRadius:3}}
+  ]}},
+  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2,
+    plugins:{{legend:{{labels:{{color:'#8b95a5'}}}}}},
+    scales:{{y:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}},title:{{display:true,text:'下一局评分',color:'#8b95a5'}}}},x:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}},title:{{display:true,text:'当前局评分',color:'#8b95a5'}}}}}}
+  }}
+}});""")
+
+    # "再来一局"陷阱
+    omg = r.get("one_more_game", {})
+    # 在标签上附加样本量
+    omg_sizes = omg.get('session_sizes', [])
+    omg_counts = omg.get('bin_counts', [])
+    omg_labels_with_n = [f"{lbl}\\n({omg_counts[i]}次)" if i < len(omg_counts) else lbl for i, lbl in enumerate(omg_sizes)]
+    # 整体平均胜率参考线
+    omg_avg = omg.get('overall_avg_wr', 0)
+    omg_avg_line = [omg_avg] * len(omg_sizes) if omg_sizes else []
+    parts.append(f"""new Chart(document.getElementById('chart-one-more'),{{
+  type:'bar',
+  data:{{labels:{_chart_json(omg_labels_with_n)},
+    datasets:[
+      {{label:'前N-1局胜率 %',data:{_chart_json(omg.get('prev_wrs',[]))},backgroundColor:'rgba(74,158,255,0.7)',borderColor:'#4a9eff',borderWidth:1}},
+      {{label:'末局胜率 %',data:{_chart_json(omg.get('last_wrs',[]))},backgroundColor:'rgba(236,72,153,0.7)',borderColor:'#ec4899',borderWidth:1}},
+      {{label:'整体平均胜率 ({omg_avg}%)',data:{_chart_json(omg_avg_line)},type:'line',borderColor:'#c8aa6e',borderWidth:2,borderDash:[6,4],pointRadius:0,fill:false,order:1}}
+    ]
+  }},
+  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2,
+    plugins:{{legend:{{labels:{{color:'#8b95a5'}}}}}},
+    scales:{{y:{{max:100,ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}},x:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}}}}
+  }}
+}});""")
+
+    # Carry依赖度画像
+    cp = r.get("carry_profile", {})
+    parts.append(f"""new Chart(document.getElementById('chart-carry-profile'),{{
+  type:'bar',
+  data:{{labels:['胜局分类','败局分类'],
+    datasets:[
+      {{label:'硬Carry',data:[{cp.get('win_data',[0,0,0])[0] if cp.get('win_data') else 0},0],backgroundColor:'rgba(245,158,11,0.8)',borderColor:'#f59e0b',borderWidth:1}},
+      {{label:'稳定参与',data:[{cp.get('win_data',[0,0,0])[1] if cp.get('win_data') else 0},0],backgroundColor:'rgba(74,158,255,0.7)',borderColor:'#4a9eff',borderWidth:1}},
+      {{label:'躺赢',data:[{cp.get('win_data',[0,0,0])[2] if cp.get('win_data') else 0},0],backgroundColor:'rgba(149,165,166,0.7)',borderColor:'#95a5a6',borderWidth:1}},
+      {{label:'尽力局(SVP)',data:[0,{cp.get('loss_data',[0,0,0])[0] if cp.get('loss_data') else 0}],backgroundColor:'rgba(168,85,247,0.7)',borderColor:'#a855f7',borderWidth:1}},
+      {{label:'普通败局',data:[0,{cp.get('loss_data',[0,0,0])[1] if cp.get('loss_data') else 0}],backgroundColor:'rgba(46,204,113,0.5)',borderColor:'#2ecc71',borderWidth:1}},
+      {{label:'崩盘局',data:[0,{cp.get('loss_data',[0,0,0])[2] if cp.get('loss_data') else 0}],backgroundColor:'rgba(231,76,60,0.7)',borderColor:'#e74c3c',borderWidth:1}}
+    ]
+  }},
+  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2,
+    plugins:{{legend:{{labels:{{color:'#8b95a5'}}}}}},
+    scales:{{x:{{stacked:true,ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}},y:{{stacked:true,ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}}}}
+  }}
+}});""")
+
+    # 多杀含金量
+    mk = r.get("multi_kill_impact", {})
+    parts.append(f"""new Chart(document.getElementById('chart-multikill'),{{
+  type:'bar',
+  data:{{labels:{_chart_json(mk.get('labels',[]))},
+    datasets:[
+      {{label:'胜率 %',data:{_chart_json(mk.get('winrates',[]))},backgroundColor:'rgba(245,158,11,0.7)',borderColor:'#f59e0b',borderWidth:1,yAxisID:'y'}},
+      {{label:'场次',data:{_chart_json(mk.get('counts',[]))},backgroundColor:'rgba(168,85,247,0.3)',borderColor:'#a855f7',borderWidth:1,yAxisID:'y1',type:'line',tension:0.3}}
+    ]
+  }},
+  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2,
+    plugins:{{legend:{{labels:{{color:'#8b95a5'}}}}}},
+    scales:{{
+      y:{{type:'linear',position:'left',title:{{display:true,text:'胜率 %',color:'#8b95a5'}},ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}},max:100}},
+      y1:{{type:'linear',position:'right',title:{{display:true,text:'场次',color:'#8b95a5'}},ticks:{{color:'#8b95a5'}},grid:{{display:false}}}},
+      x:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}}
+    }}
+  }}
+}});""")
+
+    # LP效率柱状图（按英雄）
+    lp = r.get("lp_efficiency", {})
+    by_champ = lp.get("by_champ", [])
+    lp_champ_names = [c["name"] for c in by_champ]
+    lp_champ_vals = [c["lp_per_hr"] for c in by_champ]
+    lp_colors = ["rgba(46,204,113,0.7)" if v > 0 else "rgba(231,76,60,0.7)" for v in lp_champ_vals]
+    parts.append(f"""new Chart(document.getElementById('chart-lp-by-champ'),{{
+  type:'bar',
+  data:{{labels:{_chart_json(lp_champ_names)},
+    datasets:[{{label:'LP/小时',data:{_chart_json(lp_champ_vals)},backgroundColor:{_chart_json(lp_colors)},borderWidth:1}}]
+  }},
+  options:{{indexAxis:'y',responsive:true,maintainAspectRatio:true,aspectRatio:2,
+    plugins:{{legend:{{display:false}}}},
+    scales:{{x:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}},title:{{display:true,text:'LP/小时',color:'#8b95a5'}}}},y:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}}}}
+  }}
+}});""")
+
+    # 时间热力图（纯JS渲染 — 胜率，12列每列2小时）
+    pt = r.get("prime_time_matrix", {})
+    if pt.get("cells"):
+        cells_json = _chart_json(pt.get("cells", []))
+        game_cells_json = _chart_json(pt.get("game_cells", []))
+        day_labels_json = _chart_json(pt.get("day_labels", []))
+        hour_labels_json = _chart_json(pt.get("hour_labels", []))
+        parts.append(f"""(function(){{
+  var cells={cells_json};
+  var gameCells={game_cells_json};
+  var dayLabels={day_labels_json};
+  var hourLabels={hour_labels_json};
+  var numSlots=hourLabels.length;
+
+  // 胜率热力图
+  (function(){{
+    if(!cells.length)return;
+    var container=document.getElementById('heatmap-prime-time');
+    var table=document.createElement('table');
+    table.style.cssText='border-collapse:collapse;table-layout:fixed;width:100%;font-size:11px';
+    var thead='<tr><th style="padding:4px 6px;color:#5a6575"></th>';
+    for(var h=0;h<numSlots;h++) thead+='<th style="padding:4px;color:#5a6575;font-weight:400;text-align:center">'+hourLabels[h]+'</th>';
+    thead+='</tr>';
+    var rows='';
+    for(var d=0;d<7;d++){{
+      rows+='<tr><td style="padding:4px 6px;color:#8b95a5;font-weight:600;white-space:nowrap">'+dayLabels[d]+'</td>';
+      for(var h=0;h<numSlots;h++){{
+        var found=cells.find(function(c){{return c.day===d&&c.hour===h;}});
+        if(found){{
+          var wr=found.wr;
+          // 颜色: 红(<45%) → 黄(45-55%) → 绿(>55%)
+          var hue,sat,light;
+          if(wr>=55){{hue=120;sat=22+Math.min(35,(wr-55)*0.7);light=50-Math.min(12,(wr-55)*0.24);}}
+          else if(wr>=45){{hue=40;sat=22+Math.min(35,Math.abs(wr-50)*7);light=50-Math.abs(wr-50)*0.18;}}
+          else{{hue=0;sat=22+Math.min(35,(45-wr)*0.7);light=50-Math.min(12,(45-wr)*0.24);}}
+          var bg='hsl('+hue+','+sat+'%,'+light+'%)';
+          var textColor=light>46?'#0a0e14':'#d4d8dd';
+          rows+='<td style="padding:4px;text-align:center;background:'+bg+';color:'+textColor+';cursor:pointer" title="'+dayLabels[d]+' '+hourLabels[h]+' - 胜率 '+wr+'% ('+found.games+'场)">'+Math.round(wr)+'</td>';
+        }}else{{
+          rows+='<td style="padding:4px;text-align:center;color:#2a3a4a">·</td>';
+        }}
+      }}
+      rows+='</tr>';
+    }}
+    table.innerHTML=thead+rows;
+    container.appendChild(table);
+  }})();
+
+  // 对局数量热力图
+  (function(){{
+    if(!gameCells.length)return;
+    var container=document.getElementById('heatmap-game-count');
+    if(!container)return;
+    var table=document.createElement('table');
+    table.style.cssText='border-collapse:collapse;table-layout:fixed;width:100%;font-size:11px';
+    var thead='<tr><th style="padding:4px 6px;color:#5a6575"></th>';
+    for(var h=0;h<numSlots;h++) thead+='<th style="padding:4px;color:#5a6575;font-weight:400;text-align:center">'+hourLabels[h]+'</th>';
+    thead+='</tr>';
+    // 计算最大游戏数用于归一化颜色
+    var maxGames=0;
+    gameCells.forEach(function(c){{if(c.games>maxGames)maxGames=c.games;}});
+    var rows='';
+    for(var d=0;d<7;d++){{
+      rows+='<tr><td style="padding:4px 6px;color:#8b95a5;font-weight:600;white-space:nowrap">'+dayLabels[d]+'</td>';
+      for(var h=0;h<numSlots;h++){{
+        var found=gameCells.find(function(c){{return c.day===d&&c.hour===h;}});
+        if(found&&found.games>0){{
+          var intensity=Math.min(1,found.games/maxGames*0.85+0.15);
+          var bg='hsl(215,35%,'+(60-intensity*35)+'%)';
+          var textColor=intensity>0.6?'#d4d8dd':'#8b95a5';
+          rows+='<td style="padding:4px;text-align:center;background:'+bg+';color:'+textColor+';cursor:pointer" title="'+dayLabels[d]+' '+hourLabels[h]+' - '+found.games+'场">'+found.games+'</td>';
+        }}else{{
+          rows+='<td style="padding:4px;text-align:center;color:#2a3a4a">·</td>';
+        }}
+      }}
+      rows+='</tr>';
+    }}
+    table.innerHTML=thead+rows;
+    container.appendChild(table);
+  }})();
+}})();""")
+
+    # 将每个图表的 aspectRatio 同步到父容器 CSS，确保 canvas 填满时不拉伸
+    parts.append("""document.querySelectorAll('.chart-wrap canvas').forEach(function(c){
+  var ch=Chart.getChart(c);
+  if(ch&&ch.options.aspectRatio){c.parentElement.style.aspectRatio=ch.options.aspectRatio;}
+});""")
     return "\n".join(parts)
 
 def _build_html(results: dict) -> str:
@@ -2392,13 +3177,11 @@ def _build_html(results: dict) -> str:
     nav = _build_nav()
     hero = _build_hero(ov)
     sections = "".join([
-        _build_section_temporal(results),
-        _build_section_champion(results),
-        _build_section_rank(results),
-        _build_section_attendance(results),
-        _build_section_session(results),
+        _build_section_winrate(results),
+        _build_section_game_rhythm(results),
         _build_section_psychology(results),
-        _build_section_performance(results),
+        _build_section_player_level(results),
+        _build_section_attendance(results),
     ])
     charts_js = _build_all_charts(results)
     footer = _build_footer(ov.get("total_games", 0), export_time)
@@ -2433,6 +3216,8 @@ def _build_html(results: dict) -> str:
     document.head.appendChild(s);
   }}
   function initCharts(){{
+    Chart.defaults.font.size=12;
+    Chart.defaults.font.family='"Microsoft YaHei","PingFang SC",sans-serif';
 {charts_js}
   }}
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){{tryCDN(0);}});
@@ -2441,7 +3226,6 @@ def _build_html(results: dict) -> str:
 </script>
 </body>
 </html>"""
-
 
 def _build_empty_report(db_path: str) -> str:
     return f"""<!DOCTYPE html>
@@ -2467,11 +3251,10 @@ code{{background:#141b22;padding:2px 8px;border-radius:4px;color:#c8aa6e}}
 </body>
 </html>"""
 
-
 def generate_report(
     db_path: str = "wegame_matches.db",
-    output_path: str = "lol_analysis_report.html",
-    session_gap_hours: float = 3.0,
+    output_path: str = "report.html",
+    session_gap_hours: float = 2.0,
 ) -> str:
     db_abs = str(Path(db_path).resolve())
     if not Path(db_path).exists():
@@ -2508,16 +3291,18 @@ def generate_report(
         "sessions": _analyze_sessions(matches, session_gap_hours),
         "tilt": _analyze_tilt(matches),
         "streaks": _analyze_streaks(matches),
-        "comebacks": _analyze_comebacks(matches),
-        "carry": _analyze_carry(matches),
-        "support_carry": _analyze_support_carry(matches),
-        "early_vs_late": _analyze_early_vs_late(matches),
         "consistency": _analyze_consistency(matches),
-        "weekly_rhythm": _analyze_weekly_rhythm(matches),
-        "position_flexibility": _analyze_position_flexibility(matches),
         "surrender": _analyze_surrender(matches),
         "afk_impact": _analyze_afk_impact(matches),
         "gold_efficiency": _analyze_gold_efficiency(matches),
+        # 行为与心理
+        "boomerang_effect": _analyze_boomerang_effect(matches),
+        "one_more_game": _analyze_one_more_game(matches),
+        # 效率与风格
+        "carry_profile": _analyze_carry_profile(matches),
+        "multi_kill_impact": _analyze_multi_kill_impact(matches),
+        "lp_efficiency": _analyze_lp_efficiency(matches),
+        "prime_time_matrix": _analyze_prime_time_matrix(matches),
     }
     html = _build_html(results)
     dated_output.write_text(html, encoding="utf-8")

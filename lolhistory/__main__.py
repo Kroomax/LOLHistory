@@ -141,10 +141,10 @@ def build_parser() -> argparse.ArgumentParser:
                      help="从 SQLite 数据生成交互式 HTML 分析报告")
     ana.add_argument("--db", default="wegame_matches.db",
                      help="SQLite 数据库路径（默认: wegame_matches.db）")
-    ana.add_argument("--output", dest="html_output", default="lol_analysis_report.html",
-                     help="HTML 报告输出路径（默认: lol_analysis_report.html）")
-    ana.add_argument("--session-gap", type=float, default=3.0,
-                     help="Session 判定间隔小时数（默认: 3.0）")
+    ana.add_argument("--output", dest="html_output", default="report.html",
+                     help="HTML 报告输出路径（默认: report.html，自动添加日期后缀）")
+    ana.add_argument("--session-gap", type=float, default=2.0,
+                     help="游戏轮次判定间隔小时数（默认: 2.0）")
 
     # ── 其他 ─────────────────────────────────────────────────────────────
     p.add_argument("-v", "--verbose", action="store_true", help="详细日志输出")
@@ -361,7 +361,7 @@ def run_wegame(args) -> int:
     cookies = {}
     if args.cookies:
         cookies = load_cookies(args.cookies)
-        logger.info("从 %s 加载了 %d 个 Cookie", len(cookies), args.cookies)
+        logger.info("从 %s 加载了 %d 个 Cookie", args.cookies, len(cookies))
 
     overrides = {
         "puin": args.puin or "",

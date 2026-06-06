@@ -87,7 +87,7 @@ Cookie（与 WeGame 助手页共享 session），必需 4 个：`puin`, `pkey`, 
 
 ## 数据分析 (_analysis.py)
 
-CLI: `python -m lolhistory --analyze [--db wegame_matches.db] [--output report.html] [--session-gap 3.0]`
+CLI: `python -m lolhistory --analyze [--db wegame_matches.db] [--output report.html] [--session-gap 2.0]`
 
 从 SQLite (`match_summary`) 读取全量对局 → 30+ 维度分析 → 输出单个静态交互式 HTML。
 
@@ -112,3 +112,24 @@ CLI: `python -m lolhistory --analyze [--db wegame_matches.db] [--output report.h
 - **Chart.js v4 CDN**: bootcdn → jsdelivr → unpkg 三级 fallback（国内友好）
 - **所有标签中文化**: 仅保留 KDA/GPM/LP 等常用缩写
 - **无新依赖**: 仅使用 stdlib（`sqlite3`, `json`, `datetime`, `collections`, `math`, `statistics`）
+
+### 图表 JS 代码调试经验
+
+**所有图表都不显示时，优先检查 JS 语法错误**——Chart.js 在遇到第一个语法错误时就停止执行，导致全部图表空白。
+
+**常见根因：f-string 中 `{{}}` 嵌套对象括号计数错误**。例如：
+```python
+# ❌ 错误 — scales 被提前关闭，y 变成 options 的顶级属性
+scales:{{x:{{...grid:{{color:'#2a3a4a'}}}}}},y:{{...}}}
+#                                    ↑ 这里 }}}} 同时关闭 grid + x + scales
+#                                    ↓ 正确：只关闭 grid + x，scales 保持打开
+scales:{{x:{{...grid:{{color:'#2a3a4a'}}}},y:{{...}}}}
+```
+
+**排查流程：**
+1. 用 `node -e "new Function(scriptBody)"` 检查 JS 语法，无需浏览器
+2. 用 `grep -n "new Chart" report.html` 确认图表初始化数量与 canvas 数量一致
+3. 检查双 Y 轴（`yAxisID: 'y1'`）的 chart 是否在 `scales` 中正确定义了 `y1`
+4. 散点图数据格式：`{x: val, y: val}` 而非 `[x, y]`
+
+**诀窍：** 复杂嵌套对象（如多轴 scales）优先用多行格式而非单行内联，减少括号计数失误。修改图表 JS 后，务必用 `node -e` 做语法验证。
