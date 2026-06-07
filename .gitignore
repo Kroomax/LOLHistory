@@ -18,6 +18,8 @@ wegame-api-export/*
 *.db
 *.json
 report*
+*.db-shm
+*.db-wal
 
 # IDE settings
 .vscode/

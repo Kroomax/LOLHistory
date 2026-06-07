@@ -323,6 +323,320 @@ CREATE TABLE IF NOT EXISTS career_overview (
 )
 """
 
+# ── 注释元数据表 ─────────────────────────────────────────────────────────
+# SQLite 不支持原生 COMMENT ON，通过元数据表存储表注释和字段注释。
+# 新建数据库时自动创建并写入注释，已有数据库可通过 add_db_comments.py 补充。
+
+SQL_CREATE_TABLE_COMMENTS = """
+CREATE TABLE IF NOT EXISTS table_comments (
+    table_name  TEXT PRIMARY KEY,
+    comment     TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+)
+"""
+
+SQL_CREATE_COLUMN_COMMENTS = """
+CREATE TABLE IF NOT EXISTS column_comments (
+    table_name  TEXT NOT NULL,
+    column_name TEXT NOT NULL,
+    comment     TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    PRIMARY KEY (table_name, column_name)
+)
+"""
+
+# 表注释字典
+_TABLE_COMMENTS = {
+    "match_summary": (
+        "对局摘要表。"
+        "数据来源: WeGame API GetBattleList。"
+        "以玩家视角记录每局比赛的核心数据，每局一行，game_id 主键唯一。"
+        "包含 KDA、经济、荣誉标记、段位快照等 35 列。"
+        "写入策略: INSERT OR REPLACE。"
+    ),
+    "match_detail": (
+        "对局详情表。"
+        "数据来源: WeGame API GetBattleDetail。"
+        "记录每局 10 位玩家的完整数据，每局最多 10 行，每位玩家一行。"
+        "包含装备(7件)、召唤师技能(2个)、符文(6个)、伤害/经济/视野等 32 列。"
+        "通过 game_id 关联 match_summary 表。"
+        "写入策略: INSERT OR IGNORE (通过 (game_id, summoner_name) 唯一索引去重)。"
+    ),
+    "summoner_profile": (
+        "召唤师资料表。"
+        "数据来源: GetSummonerInfo + GetPlayerRecentStat。"
+        "用户当前状态的完整快照，55列。包含基本信息、赛季段位、近30天统计、生涯总数据。"
+        "每次运行覆盖更新。写入策略: INSERT OR REPLACE (以 puin 为主键)。"
+    ),
+    "summoner_snapshot": (
+        "召唤师历史快照表。"
+        "数据来源: 与 summoner_profile 相同 (GetSummonerInfo + GetPlayerRecentStat)。"
+        "每次运行工具时追加一条记录，追踪等级、段位、胜点等关键指标随时间的变化趋势。"
+        "16列。(puin, fetched_at) 组合唯一。写入策略: INSERT OR IGNORE。"
+    ),
+    "champion_mastery": (
+        "英雄熟练度表。"
+        "数据来源: WeGame API GetChampion (flag=2, 需 openid)。"
+        "全部 172 个英雄的熟练度当前快照，每英雄一行，13列。"
+        "包含场次、胜率、常用分路、赛季数据等。"
+        "写入策略: INSERT OR REPLACE (以 (puin, champion_id) 复合主键去重)。"
+    ),
+    "champion_mastery_snapshot": (
+        "英雄熟练度历史快照表。"
+        "数据来源: 与 champion_mastery 相同 (GetChampion)。"
+        "每次运行追加记录，追踪每个英雄的场次和胜场随时间增长趋势。"
+        "8列。(puin, champion_id, fetched_at) 组合唯一。写入策略: INSERT OR IGNORE。"
+    ),
+    "season_history": (
+        "赛季历史表。"
+        "数据来源: WeGame API GetBattleReport (sids=[255] 获取所有赛季)。"
+        "记录每个赛季的排位(单双排)和组排数据，每赛季一行，15列。"
+        "包含场次、段位、胜点等信息。写入策略: INSERT OR REPLACE (以 (puin, sid) 复合主键去重)。"
+    ),
+    "career_overview": (
+        "生涯全模式总览表。"
+        "数据来源: WeGame API GetBattleReport.battle_count。"
+        "记录用户在各游戏模式下(匹配/大乱斗/单双排/组排/人机/Clash/全部)的总场次、胜场、负场统计。"
+        "每用户一行，19列。写入策略: INSERT OR REPLACE (以 puin 为主键)。"
+    ),
+}
+
+# 字段注释字典
+_COLUMN_COMMENTS = {
+    "match_summary": {
+        "game_id": "[主键] 对局唯一ID (WeGame game_id)",
+        "game_start_time": "对局开始时间 (ISO 格式, 从 Unix 时间戳转换)",
+        "game_time_played": "游戏时长 (秒)",
+        "game_queue_id": "队列类型ID (参见 QUEUE_NAMES, 共96种)",
+        "queue_name": "队列类型中文名 (如'单双排'、'匹配模式'、'极地大乱斗')",
+        "map_id": "地图ID (参见 MAP_NAMES, 共17种)",
+        "map_name": "地图中文名 (如'召唤师峡谷'、'嚎哭深渊')",
+        "champion_id": "玩家使用英雄ID",
+        "position": "玩家位置 (上单/打野/中单/下路/辅助)",
+        "team_id": "队伍ID (100=蓝方, 200=红方)",
+        "win": "是否胜利 (1=胜, 0=负)",
+        "kills": "击杀数",
+        "deaths": "死亡数",
+        "assists": "助攻数",
+        "kda": "KDA比率: (击杀+助攻)/max(死亡,1), 保留2位小数",
+        "game_score": "游戏评分 (WeGame 评分系统)",
+        "gold_earned": "获得金币总量",
+        "double_kills": "双杀次数",
+        "triple_kills": "三杀次数",
+        "quadra_kills": "四杀次数",
+        "penta_kills": "五杀次数",
+        "was_mvp": "是否获得MVP (1=是, 0=否)",
+        "was_svp": "是否获得SVP (1=是, 0=否, 败方最佳)",
+        "was_surrender": "是否投降 (1=是, 0=否)",
+        "was_afk": "是否挂机 (1=是, 0=否)",
+        "most_kills": "击杀最多 (1=是, 0=否, 本局10人中该项最高)",
+        "most_assists": "助攻最多 (1=是, 0=否, 本局10人中该项最高)",
+        "most_gold": "金币最多 (1=是, 0=否, 本局10人中该项最高)",
+        "most_damage": "伤害最高 (1=是, 0=否, 本局10人中该项最高)",
+        "most_taken": "承受伤害最高 (1=是, 0=否, 本局10人中该项最高)",
+        "most_turrets": "推塔最多 (1=是, 0=否, 本局10人中该项最高)",
+        "tier": "段位名称 (如'黄金'、'铂金', 来自 game_level JSON)",
+        "league_points": "胜点 (0-100, 对局时的段位快照)",
+        "rank": "段位等级 (如'III'、'IV', 对局时的段位快照)",
+        "game_version": "游戏版本号 (如 14.10.xxx)",
+    },
+    "match_detail": {
+        "id": "[主键] 自增行ID",
+        "game_id": "对局ID (外键 -> match_summary.game_id)",
+        "summoner_name": "召唤师名称",
+        "champion_id": "英雄ID",
+        "team_id": "队伍ID (100=蓝方, 200=红方)",
+        "win": "是否胜利 (1=胜, 0=负)",
+        "kills": "击杀数",
+        "deaths": "死亡数",
+        "assists": "助攻数",
+        "kda": "KDA比率: (击杀+助攻)/max(死亡,1)",
+        "item0": "装备栏1 物品ID",
+        "item1": "装备栏2 物品ID",
+        "item2": "装备栏3 物品ID",
+        "item3": "装备栏4 物品ID",
+        "item4": "装备栏5 物品ID",
+        "item5": "装备栏6 物品ID",
+        "item6": "饰品栏 物品ID",
+        "spell1_id": "召唤师技能1 ID (如 4=闪现, 14=点燃)",
+        "spell2_id": "召唤师技能2 ID",
+        "perk0": "主系基石符文ID",
+        "perk1": "主系第一排符文ID",
+        "perk2": "主系第二排符文ID",
+        "perk3": "主系第三排符文ID",
+        "perk4": "副系第一排符文ID",
+        "perk5": "副系第二排符文ID (属性碎片)",
+        "total_damage": "对英雄造成总伤害",
+        "total_taken": "承受总伤害",
+        "gold_earned": "获得金币总量",
+        "minions_killed": "补刀数 (小兵+野怪)",
+        "vision_score": "视野得分",
+        "cc_score": "控制得分 (硬控/软控)",
+        "is_self": "是否为自己 (1=是, 0=否, 通过 openid 匹配)",
+    },
+    "summoner_profile": {
+        "puin": "[主键] WeGame 用户唯一标识 (数字UID)",
+        "summoner_id": "召唤师数字ID (来自 WeGame 服务端)",
+        "summoner_name": "召唤师名称 (不含 #tag)",
+        "name_tag": "召唤师标签 (#后的部分)",
+        "level": "召唤师等级",
+        "experience": "经验值",
+        "icon_id": "头像ID",
+        "praise": "点赞数 (荣誉系统)",
+        "discredit": "点踩数",
+        "top_of_canyon": "是否峡谷之巅玩家 (1=是, 0=否)",
+        "openid": "加密 openid (用于 account_type=2 的 API 调用)",
+        "area": "服务器大区编号 (1=艾欧尼亚, 默认1)",
+        "season_sid": "当前赛季ID",
+        "season_total": "当前赛季总场次",
+        "season_wins": "当前赛季胜场",
+        "season_losses": "当前赛季负场",
+        "season_tier": "当前赛季段位 (WeGame编号: 1钻石 2翡翠 3铂金 4黄金 5白银 6大师 7宗师 8王者)",
+        "season_win_point": "当前赛季胜点 (0-100)",
+        "season_queue": "当前赛季队列类型 (单双排/组排)",
+        "kill_30days": "近30天击杀总数",
+        "death_30days": "近30天死亡总数",
+        "assist_30days": "近30天助攻总数",
+        "recent_win_times": "近30天胜场",
+        "recent_play_times": "近30天总场次",
+        "last_game_id": "最近一场对局ID",
+        "recent_kda_score": "近30天KDA评分",
+        "last_game_time": "最后对局时间",
+        "common_champions": "常用英雄列表 (JSON 字符串数组)",
+        "common_positions": "常用位置列表 (JSON 字符串数组)",
+        "total_mvp_times": "生涯MVP总次数",
+        "total_svp_times": "生涯SVP总次数 (败方最佳)",
+        "total_god_likes": "生涯超神次数 (连续击杀不作死亡)",
+        "total_penta_kills": "生涯五杀次数",
+        "total_quadra_kills": "生涯四杀次数",
+        "total_triple_kills": "生涯三杀次数",
+        "max_consecutive_wins": "生涯最长连胜场次",
+        "highest_game_score": "生涯单局最高评分",
+        "most_kills_num": "生涯单局最高击杀数",
+        "most_assists_num": "生涯单局最高助攻数",
+        "most_spree_kills_num": "生涯单局最高连杀数",
+        "most_damage_num": "生涯单局最高伤害",
+        "most_damage_taken_num": "生涯单局最高承伤",
+        "most_gold_earned_num": "生涯单局最高经济",
+        "most_minions_kill_num": "生涯单局最高补刀",
+        "most_turrets_kill_num": "生涯单局最高推塔",
+        "total_kills": "生涯总击杀",
+        "total_assists": "生涯总助攻",
+        "total_ward_placed": "生涯总插眼数",
+        "longest_game_num": "生涯最长对局时长 (秒)",
+        "shortest_game_num": "生涯最短对局时长 (秒)",
+        "last_fetch_time": "最后数据获取时间 (ISO 格式)",
+    },
+    "summoner_snapshot": {
+        "id": "[主键] 自增快照ID",
+        "puin": "WeGame 用户唯一标识",
+        "fetched_at": "快照时间 (ISO 格式, 每次运行的时间戳)",
+        "level": "召唤师等级",
+        "season_tier": "当前赛季段位编号 (WeGame编号)",
+        "season_win_point": "当前赛季胜点 (0-100)",
+        "season_total": "当前赛季总场次",
+        "season_wins": "当前赛季胜场",
+        "season_losses": "当前赛季负场",
+        "praise": "点赞数",
+        "discredit": "点踩数",
+        "total_kills": "生涯总击杀 (追踪增长)",
+        "total_assists": "生涯总助攻 (追踪增长)",
+        "total_mvp_times": "生涯MVP次数 (追踪增长)",
+        "total_svp_times": "生涯SVP次数 (追踪增长)",
+        "recent_win_times": "近30天胜场",
+        "recent_play_times": "近30天总场次",
+    },
+    "champion_mastery": {
+        "puin": "WeGame 用户唯一标识",
+        "champion_id": "英雄ID",
+        "total_games": "该英雄总场次",
+        "wins": "该英雄胜场",
+        "win_rate": "该英雄胜率 (百分比, 如 55.3 表示 55.3%)",
+        "mastery_exp": "熟练度经验值 (用于计算熟练度等级)",
+        "expire_day": "熟练度到期天数 (-1=永久)",
+        "instance_id": "当前装备的皮肤实例ID",
+        "sid_total": "当前赛季使用该英雄总场次",
+        "sid_wins": "当前赛季使用该英雄胜场",
+        "sid_exp": "当前赛季该英雄经验值",
+        "lanes_json": "常用分路列表 (JSON 字符串, 如 [\"中路\",\"上路\"])",
+        "last_fetch_time": "最后数据获取时间 (ISO 格式)",
+    },
+    "champion_mastery_snapshot": {
+        "id": "[主键] 自增快照ID",
+        "puin": "WeGame 用户唯一标识",
+        "champion_id": "英雄ID",
+        "fetched_at": "快照时间 (ISO 格式)",
+        "total_games": "该英雄当前总场次",
+        "wins": "该英雄当前胜场",
+        "sid_total": "当前赛季该英雄场次",
+        "sid_wins": "当前赛季该英雄胜场",
+    },
+    "season_history": {
+        "puin": "WeGame 用户唯一标识",
+        "sid": "赛季ID (数值, 如 26)",
+        "total_games": "该赛季单双排总场次",
+        "wins": "该赛季单双排胜场",
+        "losses": "该赛季单双排负场",
+        "tier": "该赛季单双排段位 (WeGame编号, 255=未定级)",
+        "win_point": "该赛季单双排胜点 (0-100)",
+        "queue": "单双排队列类型编号",
+        "team_total": "该赛季组排总场次",
+        "team_wins": "该赛季组排胜场",
+        "team_losses": "该赛季组排负场",
+        "team_tier": "该赛季组排段位 (WeGame编号, 255=未定级)",
+        "team_win_point": "该赛季组排胜点 (0-100)",
+        "team_queue": "组排队列类型编号",
+        "last_fetch_time": "最后数据获取时间 (ISO 格式)",
+    },
+    "career_overview": {
+        "puin": "[主键] WeGame 用户唯一标识",
+        "total_match_games": "匹配模式总场次",
+        "total_match_wins": "匹配模式胜场",
+        "total_match_losses": "匹配模式负场",
+        "total_aram_games": "大乱斗总场次",
+        "total_aram_wins": "大乱斗胜场",
+        "total_aram_losses": "大乱斗负场",
+        "total_rank_games": "单双排总场次",
+        "total_rank_wins": "单双排胜场",
+        "total_rank_losses": "单双排负场",
+        "total_teamrank_games": "组排总场次",
+        "total_teamrank_wins": "组排胜场",
+        "total_teamrank_losses": "组排负场",
+        "total_all_games": "全部模式总场次",
+        "total_all_wins": "全部模式胜场",
+        "total_all_losses": "全部模式负场",
+        "total_ai_games": "人机模式总场次",
+        "total_ai_wins": "人机模式胜场",
+        "total_clash_games": "Clash (冠军杯) 总场次",
+        "last_fetch_time": "最后数据获取时间 (ISO 格式)",
+    },
+}
+
+
+def _ensure_table_comments(db: sqlite3.Connection):
+    """确保数据库中已创建注释元数据表并写入全部注释。
+
+    每次运行时调用，INSERT OR REPLACE 保证幂等性——
+    不会因为多次运行产生重复数据，也不会覆盖手动修改的注释。
+    """
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    db.execute(SQL_CREATE_TABLE_COMMENTS)
+    db.execute(SQL_CREATE_COLUMN_COMMENTS)
+
+    for table_name, comment in _TABLE_COMMENTS.items():
+        db.execute(
+            "INSERT OR REPLACE INTO table_comments (table_name, comment, updated_at) VALUES (?, ?, ?)",
+            (table_name, comment, now),
+        )
+
+    for table_name, columns in _COLUMN_COMMENTS.items():
+        for col_name, comment in columns.items():
+            db.execute(
+                "INSERT OR REPLACE INTO column_comments (table_name, column_name, comment, updated_at) VALUES (?, ?, ?, ?)",
+                (table_name, col_name, comment, now),
+            )
+
+
 SUMMARY_COLUMNS = [
     "game_id", "game_start_time", "game_time_played", "game_queue_id",
     "queue_name", "map_id", "map_name", "champion_id", "position", "team_id",
@@ -877,6 +1191,9 @@ def export_sqlite(
         db.execute(insert_career,
                    tuple(career_row[col] for col in CAREER_OVERVIEW_COLUMNS))
         logger.info("SQLite career_overview: 已更新")
+
+    # 写入注释元数据 (INSERT OR REPLACE, 幂等)
+    _ensure_table_comments(db)
 
     db.commit()
     db.close()
