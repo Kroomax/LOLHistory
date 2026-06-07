@@ -40,7 +40,7 @@ MVP 结构，7 个模块各司其职，方法之间互不引用：
 | `_lcu.py` | 方法1+2：lockfile 4策略发现 → LCU ApiClient → 分页获取 → 解析 |
 | `_wegame.py` | 方法3：Cookie 认证 → WegameApiClient → 6 个 API 端点 + 6 个解析函数 |
 | `_cookie_extract.py` | 方法3 Cookie获取：从 Fiddler/Charles 导出的 HAR/raw/curl 文件中提取 cookie |
-| `_export.py` | 导出：CSV（UTF-8 BOM）+ SQLite（8 张表） |
+| `_export.py` | 导出：CSV（UTF-8 BOM）+ SQLite（6 张表） |
 | `_analysis.py` | 数据分析：从 SQLite 读取 → 30+ 维度分析 → 生成单个交互式 HTML 报告（6 章，~30 图表） |
 
 方法4（Riot官方API，国服不可用）未实现。LCU约100~200场，WeGame约500场且含段位/10人装备符文。
@@ -78,7 +78,7 @@ MVP 结构，7 个模块各司其职，方法之间互不引用：
 4. **自动调用 `GetPlayerRecentStat`**（使用 openid）→ 显示生涯击杀/MVP/五杀/连胜
 5. 继续原有对局列表获取流程
 
-步骤 2-4 失败仅 `logger.warning`，不阻断对局导出。数据自动写入 8 张 SQLite 表。
+步骤 2-4 失败仅 `logger.warning`，不阻断对局导出。数据自动写入 6 张 SQLite 表。
 
 ### 认证
 
@@ -107,16 +107,14 @@ Cookie（与 WeGame 助手页共享 session），必需 4 个：`puin`, `pkey`, 
 通过 `_post(path, body, extra_headers={"trpc-caller": "..."})` 临时覆盖请求头，
 内部用 save/restore + finally 保证不影响后续请求。
 
-### SQLite 表结构（8 张表）
+### SQLite 表结构（6 张表）
 
 | 表 | 主键 | 策略 | 用途 |
 |---|------|------|------|
 | `match_summary` | game_id | INSERT OR REPLACE | 每局对局摘要（35列） |
 | `match_detail` | AUTOINCREMENT + UNIQUE(game_id, summoner_name) | INSERT OR IGNORE | 每局10人完整数据（32列） |
 | `summoner_profile` | puin | INSERT OR REPLACE | 召唤师当前快照（55列）：基本信息 + 赛季段位 + 近30天 + 生涯总计 |
-| `summoner_snapshot` | AUTOINCREMENT + UNIQUE(puin, fetched_at) | INSERT OR IGNORE | 召唤师历史快照（16列）：追踪等级/段位/LP/MVP/SVP 变化 |
-| `champion_mastery` | (puin, champion_id) | INSERT OR REPLACE | 172英雄熟练度快照（12列）：场次/胜率/熟练度/常用分路/赛季数据 |
-| `champion_mastery_snapshot` | AUTOINCREMENT + UNIQUE(puin, champion_id, fetched_at) | INSERT OR IGNORE | 英雄熟练度历史（7列）：追踪每个英雄场次/胜场/赛季场次变化 |
+| `champion_mastery` | (puin, champion_id) | INSERT OR REPLACE | 172英雄熟练度当前快照（12列）：场次/胜率/熟练度/常用分路/赛季数据 |
 | `season_history` | (puin, sid) | INSERT OR REPLACE | 赛季段位历史（14列）：每赛季排位+组排的场次/段位/胜点 |
 | `career_overview` | puin | INSERT OR REPLACE | 生涯全模式总览（19列）：匹配/大乱斗/单双排/组排/人机各模式场次 |
 

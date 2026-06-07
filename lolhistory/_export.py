@@ -211,33 +211,6 @@ CREATE TABLE IF NOT EXISTS summoner_profile (
 )
 """
 
-SQL_CREATE_SUMMONER_SNAPSHOT = """
-CREATE TABLE IF NOT EXISTS summoner_snapshot (
-    id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    puin             TEXT NOT NULL,
-    fetched_at       TEXT NOT NULL,
-    level            INTEGER,
-    season_tier      INTEGER,
-    season_win_point INTEGER,
-    season_total     INTEGER,
-    season_wins      INTEGER,
-    season_losses    INTEGER,
-    praise           INTEGER,
-    discredit        INTEGER,
-    total_kills      INTEGER,
-    total_assists    INTEGER,
-    total_mvp_times  INTEGER,
-    total_svp_times  INTEGER,
-    recent_win_times INTEGER,
-    recent_play_times INTEGER
-)
-"""
-
-SQL_INDEX_SNAPSHOT = """
-CREATE UNIQUE INDEX IF NOT EXISTS idx_snapshot_puin_time
-ON summoner_snapshot(puin, fetched_at)
-"""
-
 # ── 新增表: 英雄熟练度 & 赛季报告 ──────────────────────────────────────────
 
 SQL_CREATE_CHAMPION_MASTERY = """
@@ -257,24 +230,6 @@ CREATE TABLE IF NOT EXISTS champion_mastery (
     last_fetch_time TEXT,
     PRIMARY KEY (puin, champion_id)
 )
-"""
-
-SQL_CREATE_CHAMPION_SNAPSHOT = """
-CREATE TABLE IF NOT EXISTS champion_mastery_snapshot (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    puin            TEXT NOT NULL,
-    champion_id     INTEGER NOT NULL,
-    fetched_at      TEXT NOT NULL,
-    total_games     INTEGER,
-    wins            INTEGER,
-    sid_total       INTEGER,
-    sid_wins        INTEGER
-)
-"""
-
-SQL_INDEX_CHAMPION_SNAPSHOT = """
-CREATE UNIQUE INDEX IF NOT EXISTS idx_champion_snapshot
-ON champion_mastery_snapshot(puin, champion_id, fetched_at)
 """
 
 SQL_CREATE_SEASON_HISTORY = """
@@ -368,24 +323,12 @@ _TABLE_COMMENTS = {
         "用户当前状态的完整快照，55列。包含基本信息、赛季段位、近30天统计、生涯总数据。"
         "每次运行覆盖更新。写入策略: INSERT OR REPLACE (以 puin 为主键)。"
     ),
-    "summoner_snapshot": (
-        "召唤师历史快照表。"
-        "数据来源: 与 summoner_profile 相同 (GetSummonerInfo + GetPlayerRecentStat)。"
-        "每次运行工具时追加一条记录，追踪等级、段位、胜点等关键指标随时间的变化趋势。"
-        "16列。(puin, fetched_at) 组合唯一。写入策略: INSERT OR IGNORE。"
-    ),
     "champion_mastery": (
         "英雄熟练度表。"
         "数据来源: WeGame API GetChampion (flag=2, 需 openid)。"
         "全部 172 个英雄的熟练度当前快照，每英雄一行，13列。"
         "包含场次、胜率、常用分路、赛季数据等。"
         "写入策略: INSERT OR REPLACE (以 (puin, champion_id) 复合主键去重)。"
-    ),
-    "champion_mastery_snapshot": (
-        "英雄熟练度历史快照表。"
-        "数据来源: 与 champion_mastery 相同 (GetChampion)。"
-        "每次运行追加记录，追踪每个英雄的场次和胜场随时间增长趋势。"
-        "8列。(puin, champion_id, fetched_at) 组合唯一。写入策略: INSERT OR IGNORE。"
     ),
     "season_history": (
         "赛季历史表。"
@@ -527,25 +470,6 @@ _COLUMN_COMMENTS = {
         "shortest_game_num": "生涯最短对局时长 (秒)",
         "last_fetch_time": "最后数据获取时间 (ISO 格式)",
     },
-    "summoner_snapshot": {
-        "id": "[主键] 自增快照ID",
-        "puin": "WeGame 用户唯一标识",
-        "fetched_at": "快照时间 (ISO 格式, 每次运行的时间戳)",
-        "level": "召唤师等级",
-        "season_tier": "当前赛季段位编号 (WeGame编号)",
-        "season_win_point": "当前赛季胜点 (0-100)",
-        "season_total": "当前赛季总场次",
-        "season_wins": "当前赛季胜场",
-        "season_losses": "当前赛季负场",
-        "praise": "点赞数",
-        "discredit": "点踩数",
-        "total_kills": "生涯总击杀 (追踪增长)",
-        "total_assists": "生涯总助攻 (追踪增长)",
-        "total_mvp_times": "生涯MVP次数 (追踪增长)",
-        "total_svp_times": "生涯SVP次数 (追踪增长)",
-        "recent_win_times": "近30天胜场",
-        "recent_play_times": "近30天总场次",
-    },
     "champion_mastery": {
         "puin": "WeGame 用户唯一标识",
         "champion_id": "英雄ID",
@@ -560,16 +484,6 @@ _COLUMN_COMMENTS = {
         "sid_exp": "当前赛季该英雄经验值",
         "lanes_json": "常用分路列表 (JSON 字符串, 如 [\"中路\",\"上路\"])",
         "last_fetch_time": "最后数据获取时间 (ISO 格式)",
-    },
-    "champion_mastery_snapshot": {
-        "id": "[主键] 自增快照ID",
-        "puin": "WeGame 用户唯一标识",
-        "champion_id": "英雄ID",
-        "fetched_at": "快照时间 (ISO 格式)",
-        "total_games": "该英雄当前总场次",
-        "wins": "该英雄当前胜场",
-        "sid_total": "当前赛季该英雄场次",
-        "sid_wins": "当前赛季该英雄胜场",
     },
     "season_history": {
         "puin": "WeGame 用户唯一标识",
@@ -678,23 +592,11 @@ SUMMONER_PROFILE_COLUMNS = [
     "longest_game_num", "shortest_game_num", "last_fetch_time",
 ]
 
-SUMMONER_SNAPSHOT_COLUMNS = [
-    "puin", "fetched_at", "level", "season_tier", "season_win_point",
-    "season_total", "season_wins", "season_losses", "praise", "discredit",
-    "total_kills", "total_assists", "total_mvp_times", "total_svp_times",
-    "recent_win_times", "recent_play_times",
-]
-
 CHAMPION_MASTERY_COLUMNS = [
     "puin", "champion_id", "total_games", "wins", "win_rate",
     "mastery_exp", "expire_day", "instance_id",
     "sid_total", "sid_wins", "sid_exp",
     "lanes_json", "last_fetch_time",
-]
-
-CHAMPION_SNAPSHOT_COLUMNS = [
-    "puin", "champion_id", "fetched_at",
-    "total_games", "wins", "sid_total", "sid_wins",
 ]
 
 SEASON_HISTORY_COLUMNS = [
@@ -864,33 +766,6 @@ def _map_summoner_profile_to_row(info: dict, career: dict | None,
     return row
 
 
-def _map_snapshot_to_row(info: dict, career: dict | None,
-                          puin: str, fetched_at: str) -> dict:
-    """提取需要历史追踪的字段映射为 summoner_snapshot 行。"""
-    row = {
-        "puin": puin,
-        "fetched_at": fetched_at,
-        "level": info.get("等级", 0),
-        "season_tier": info.get("段位", 0),
-        "season_win_point": info.get("胜点", 0),
-        "season_total": info.get("赛季总场次", 0),
-        "season_wins": info.get("赛季胜场", 0),
-        "season_losses": info.get("赛季负场", 0),
-        "praise": info.get("点赞", 0),
-        "discredit": info.get("点踩", 0),
-    }
-    if career:
-        row.update({
-            "total_kills": career.get("生涯总击杀", 0),
-            "total_assists": career.get("生涯总助攻", 0),
-            "total_mvp_times": career.get("生涯MVP", 0),
-            "total_svp_times": career.get("生涯SVP", 0),
-            "recent_win_times": career.get("近期胜场", 0),
-            "recent_play_times": career.get("近期场次", 0),
-        })
-    return row
-
-
 def _map_champion_mastery_to_row(champion: dict, puin: str, fetched_at: str) -> dict:
     """将解析后的英雄熟练度字典映射为 champion_mastery 行。"""
     return {
@@ -907,19 +782,6 @@ def _map_champion_mastery_to_row(champion: dict, puin: str, fetched_at: str) -> 
         "sid_exp": champion.get("赛季经验", 0),
         "lanes_json": champion.get("常用分路JSON", "[]"),
         "last_fetch_time": fetched_at,
-    }
-
-
-def _map_champion_snapshot_to_row(champion: dict, puin: str, fetched_at: str) -> dict:
-    """提取随时间变化的关键英雄熟练度指标。"""
-    return {
-        "puin": puin,
-        "champion_id": champion.get("英雄ID", 0),
-        "fetched_at": fetched_at,
-        "total_games": champion.get("总场次", 0),
-        "wins": champion.get("胜场", 0),
-        "sid_total": champion.get("赛季总场", 0),
-        "sid_wins": champion.get("赛季胜场", 0),
     }
 
 
@@ -996,11 +858,10 @@ def export_sqlite(
 ) -> str:
     """将对局摘要、详情和召唤师数据导出到 SQLite 数据库。
 
-    创建四张表:
+    创建三张表:
       - match_summary: 每局一行（以玩家视角记录）
       - match_detail: 每局每位玩家一行（每局最多 10 行，来自 GetBattleDetail）
       - summoner_profile: 召唤师当前信息快照（来自 GetSummonerInfo + GetPlayerRecentStat）
-      - summoner_snapshot: 召唤师历史快照（每次运行追加，追踪段位/等级变化）
 
     Args:
         parsed_battles: 解析后的对局摘要字典列表（来自 parse_battle_summary）。
@@ -1023,13 +884,13 @@ def export_sqlite(
     db.execute(SQL_CREATE_MATCH_SUMMARY)
     db.execute(SQL_CREATE_MATCH_DETAIL)
     db.execute(SQL_CREATE_SUMMONER_PROFILE)
-    db.execute(SQL_CREATE_SUMMONER_SNAPSHOT)
-    db.execute(SQL_INDEX_SNAPSHOT)
     db.execute(SQL_CREATE_CHAMPION_MASTERY)
-    db.execute(SQL_CREATE_CHAMPION_SNAPSHOT)
     db.execute(SQL_CREATE_SEASON_HISTORY)
     db.execute(SQL_CREATE_CAREER_OVERVIEW)
-    db.execute(SQL_INDEX_CHAMPION_SNAPSHOT)
+
+    # 清理旧表（v1 遗留，已不再使用）
+    db.execute("DROP TABLE IF EXISTS champion_mastery_snapshot")
+    db.execute("DROP TABLE IF EXISTS summoner_snapshot")
 
     # 在 match_detail 上建立 (game_id, summoner_name) 唯一索引，
     # 便于重跑时通过 INSERT OR IGNORE 跳过已存在的玩家行。
@@ -1112,19 +973,6 @@ def export_sqlite(
                    tuple(profile_row[col] for col in SUMMONER_PROFILE_COLUMNS))
         logger.info("SQLite summoner_profile: 已更新")
 
-        # 写入 summoner_snapshot（INSERT OR IGNORE，唯一索引防重）
-        snapshot_row = _map_snapshot_to_row(
-            summoner_info, summoner_career, puin, fetched_at)
-        snapshot_placeholders = ", ".join("?" * len(SUMMONER_SNAPSHOT_COLUMNS))
-        insert_snapshot = (
-            f"INSERT OR IGNORE INTO summoner_snapshot "
-            f"({', '.join(SUMMONER_SNAPSHOT_COLUMNS)}) "
-            f"VALUES ({snapshot_placeholders})"
-        )
-        db.execute(insert_snapshot,
-                   tuple(snapshot_row[col] for col in SUMMONER_SNAPSHOT_COLUMNS))
-        logger.info("SQLite summoner_snapshot: 已记录")
-
     # 写入英雄熟练度数据
     if champions:
         champ_fetched_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1143,21 +991,6 @@ def export_sqlite(
         ]
         db.executemany(insert_champ, champ_rows)
         logger.info("SQLite champion_mastery: %d 行", len(champ_rows))
-
-        # champion_mastery_snapshot: INSERT OR IGNORE
-        snap_placeholders = ", ".join("?" * len(CHAMPION_SNAPSHOT_COLUMNS))
-        insert_champ_snap = (
-            f"INSERT OR IGNORE INTO champion_mastery_snapshot "
-            f"({', '.join(CHAMPION_SNAPSHOT_COLUMNS)}) "
-            f"VALUES ({snap_placeholders})"
-        )
-        snap_rows = [
-            tuple(_map_champion_snapshot_to_row(c, puin, champ_fetched_at)[col]
-                  for col in CHAMPION_SNAPSHOT_COLUMNS)
-            for c in champions
-        ]
-        db.executemany(insert_champ_snap, snap_rows)
-        logger.info("SQLite champion_mastery_snapshot: %d 行", len(snap_rows))
 
     # 写入赛季历史与战斗总览
     if battle_report:
