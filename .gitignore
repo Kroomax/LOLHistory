@@ -8,8 +8,10 @@ __pycache__/
 
 # Sensitive authentication data
 cookies.json
-wegame-api-export/
 TODO*
+test*
+wegame-api-export/*
+!wegame-api-export/request_example.txt
 
 # Generated output files
 *.csv
