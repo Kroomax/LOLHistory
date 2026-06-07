@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 WEGAME_API_BASE = "https://www.wegame.com.cn"
 BATTLE_LIST_PATH = "/api/v1/wegame.pallas.game.LolBattle/GetBattleList"
 BATTLE_DETAIL_PATH = "/api/v1/wegame.pallas.game.LolBattle/GetBattleDetail"
+SUMMONER_INFO_PATH = "/api/v1/wegame.pallas.game.LolBattle/GetSummonerInfo"
+PLAYER_RECENT_STAT_PATH = "/api/v1/wegame.pallas.game.LolBattle/GetPlayerRecentStat"
+CHAMPION_PATH = "/api/v1/wegame.pallas.game.LolBattle/GetChampion"
+BATTLE_REPORT_PATH = "/api/v1/wegame.pallas.game.LolBattle/GetBattleReport"
 
 WEGAME_UA = (
     "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 "
@@ -80,9 +84,18 @@ class WegameApiClient:
     def set_openid(self, oid: str):
         self._openid = oid
 
-    def _post(self, path: str, body: dict, timeout: int | None = None) -> dict:
+    def _post(self, path: str, body: dict, timeout: int | None = None,
+              extra_headers: dict | None = None) -> dict:
         url = f"{WEGAME_API_BASE}{path}"
         t = timeout or self._timeout
+
+        # 临时覆盖请求头（如 GetSummonerInfo 需要 trpc-caller: TftBattle）
+        saved = {}
+        if extra_headers:
+            for k, v in extra_headers.items():
+                saved[k] = self.session.headers.get(k)
+                self.session.headers[k] = v
+
         try:
             resp = self.session.post(url, json=body, timeout=t)
             resp.raise_for_status()
@@ -94,6 +107,13 @@ class WegameApiClient:
             raise WegameApiError(0, f"连接被拒绝: {e}", url) from e
         except requests.Timeout as e:
             raise WegameApiError(0, f"请求超时 ({t}s): {e}", url) from e
+        finally:
+            if extra_headers:
+                for k, v in saved.items():
+                    if v is None:
+                        del self.session.headers[k]
+                    else:
+                        self.session.headers[k] = v
 
         result = data.get("result", {})
         if result.get("error_code", 0) != 0:
@@ -163,6 +183,60 @@ class WegameApiClient:
             "（GetBattleDetail POST 请求体 → 'id' 字段）。"
         )
 
+    def get_summoner_info(self, area: int = 1) -> dict:
+        """POST GetSummonerInfo — 获取召唤师基本信息、赛季段位与 openid。
+
+        注意：此接口的 trpc-caller 头为 wegame.pallas.web.TftBattle，
+        与其他接口不同。
+        """
+        return self._post(SUMMONER_INFO_PATH, {
+            "account_type": 1,
+            "area": area,
+            "id": self.puin,
+            "from_src": "lol_helper",
+        }, extra_headers={"trpc-caller": "wegame.pallas.web.TftBattle"})
+
+    def get_player_recent_stat(self, openid: str, area: int = 1) -> dict:
+        """POST GetPlayerRecentStat — 获取近30天数据与生涯总统计。
+
+        需要 openid（可从 GetSummonerInfo 或 --openid 获取）。
+        使用 account_type=2。
+        """
+        return self._post(PLAYER_RECENT_STAT_PATH, {
+            "account_type": 2,
+            "area": area,
+            "id": openid,
+            "from_src": "lol_helper",
+        })
+
+    def get_champions(self, openid: str, area: int = 1) -> dict:
+        """POST GetChampion — 获取全部 172 个英雄的熟练度数据。
+
+        需要 openid（可从 GetSummonerInfo 或 --openid 获取）。
+        使用 account_type=2, flag=2。
+        """
+        return self._post(CHAMPION_PATH, {
+            "account_type": 2,
+            "area": area,
+            "id": openid,
+            "flag": 2,
+            "from_src": "lol_helper",
+        })
+
+    def get_battle_report(self, area: int = 1) -> dict:
+        """POST GetBattleReport — 获取全模式战斗总览统计与赛季段位历史。
+
+        使用 account_type=1, id=puin。
+        sids=[255] 表示获取所有赛季数据。
+        """
+        return self._post(BATTLE_REPORT_PATH, {
+            "account_type": 1,
+            "area": area,
+            "id": self.puin,
+            "sids": [255],
+            "from_src": "lol_helper",
+        })
+
     def test_connection(self) -> bool:
         try:
             data = self.get_battle_list(offset=0, count=1)
@@ -201,6 +275,192 @@ def _decode_name(url_encoded: str) -> str:
         return unquote(url_encoded)
     except Exception:
         return url_encoded
+
+
+def _split_name_tag(full_name: str) -> tuple[str, str]:
+    """将 '召唤师名#tag' 拆分为 (名称, 标签)。"""
+    if not full_name:
+        return ("", "")
+    if "#" in full_name:
+        parts = full_name.rsplit("#", 1)
+        return (parts[0], parts[1])
+    return (full_name, "")
+
+
+def parse_summoner_info(data: dict) -> dict:
+    """解析 GetSummonerInfo 响应为扁平字典（中文键）。
+
+    包含召唤师基本信息、赛季段位数据和 openid。
+    openid 可缓存用于后续 GetBattleDetail / GetPlayerRecentStat 调用。
+    """
+    s = data.get("summoner", {})
+    season = s.get("season", {})
+
+    raw_name = s.get("name", "")
+    name_part, tag_part = _split_name_tag(raw_name)
+
+    return {
+        "召唤师ID": s.get("id", 0),
+        "召唤师名称": name_part,
+        "标签": tag_part,
+        "原始名称": raw_name,
+        "等级": s.get("level", 0),
+        "经验值": s.get("experience", 0),
+        "头像ID": s.get("icon_id", 0),
+        "点赞": s.get("praise", 0),
+        "点踩": s.get("discredit", 0),
+        "峡谷之巅": s.get("top_of_canyon", False),
+        "openid": s.get("openid", ""),
+        "大区": s.get("area", 0),
+        # 赛季数据
+        "赛季ID": season.get("sid", 0),
+        "赛季总场次": season.get("total", 0),
+        "赛季胜场": season.get("wins", 0),
+        "赛季负场": season.get("losses", 0),
+        "段位": season.get("tier", 0),
+        "胜点": season.get("win_point", 0),
+        "单双排": season.get("queue", 0),
+        # 组排数据
+        "组排总场": season.get("team_total", 0),
+        "组排胜场": season.get("team_wins", 0),
+        "组排负场": season.get("team_losses", 0),
+        "组排段位": season.get("team_tier", 255),
+        "组排胜点": season.get("team_win_point", 0),
+    }
+
+
+def parse_player_recent_stat(data: dict) -> dict:
+    """解析 GetPlayerRecentStat 响应为扁平字典（中文键）。
+
+    合并 recent_state（近30天）和 game_career（生涯总计）两个子对象。
+    常用英雄/位置以 JSON 字符串形式存储。
+    """
+    rs = data.get("recent_state", {})
+    gc = data.get("game_career", {})
+
+    common_champs = rs.get("common_use_champions", [])
+    common_pos = rs.get("common_position", [])
+
+    return {
+        # 近30天统计
+        "近30天击杀": rs.get("kill_30days", 0),
+        "近30天死亡": rs.get("death_30days", 0),
+        "近30天助攻": rs.get("assist_30days", 0),
+        "近期胜场": rs.get("win_times", 0),
+        "近期场次": rs.get("play_times", 0),
+        "最近对局ID": str(rs.get("last_game_id", "")),
+        "近期KDA分数": rs.get("kda", 0),
+        "最后对局时间": rs.get("last_game_time", ""),
+        "常用英雄JSON": json.dumps(common_champs, ensure_ascii=False) if common_champs else "[]",
+        "常用位置JSON": json.dumps(common_pos, ensure_ascii=False) if common_pos else "[]",
+        # 生涯总计
+        "生涯MVP": gc.get("total_mvp_times", 0),
+        "生涯SVP": gc.get("total_svp_times", 0),
+        "生涯超神": gc.get("total_god_likes", 0),
+        "生涯五杀": gc.get("total_penta_kills", 0),
+        "生涯四杀": gc.get("total_quadra_kills", 0),
+        "生涯三杀": gc.get("total_triple_kills", 0),
+        "最长连胜": gc.get("max_consecutive_wins", 0),
+        "最高评分": gc.get("highest_game_score", 0),
+        "单局最高击杀": gc.get("most_kills_num", 0),
+        "单局最高助攻": gc.get("most_assists_num", 0),
+        "单局最高连杀": gc.get("most_spree_kills_num", 0),
+        "单局最高伤害": gc.get("most_damage_num", 0),
+        "单局最高承伤": gc.get("most_damage_taken_num", 0),
+        "单局最高经济": gc.get("most_gold_earned_num", 0),
+        "单局最高补刀": gc.get("most_minions_kill_num", 0),
+        "单局最高推塔": gc.get("most_turrets_kill_num", 0),
+        "生涯总击杀": gc.get("total_kills", 0),
+        "生涯总助攻": gc.get("total_assists", 0),
+        "生涯总插眼": gc.get("total_ward_placed", 0),
+        "最长对局秒": gc.get("longest_game_num", 0),
+        "最短对局秒": gc.get("shortest_game_num", 0),
+    }
+
+
+def parse_champions(data: dict) -> list[dict]:
+    """解析 GetChampion 响应为英雄熟练度列表（每个英雄一个扁平字典，中文键）。
+
+    返回列表，每项包含 champion_id, 总场次, 胜场, 胜率,
+    常用分路, 赛季数据等。
+    """
+    champion_list = data.get("champion_list", [])
+    results = []
+    for c in champion_list:
+        total = c.get("total", 0) or 0
+        wins = c.get("wins", 0) or 0
+        lanes = c.get("lanes", [])
+        results.append({
+            "英雄ID": c.get("champion_id", 0),
+            "总场次": total,
+            "胜场": wins,
+            "胜率": round(wins / max(total, 1) * 100, 1),
+            "熟练度": c.get("used_exp", 0) or 0,
+            "到期天数": c.get("expire_day", 0) or 0,
+            "皮肤实例": c.get("instance_id", ""),
+            "赛季总场": c.get("sid_total", 0) or 0,
+            "赛季胜场": c.get("sid_wins", 0) or 0,
+            "赛季经验": c.get("sid_exp", 0) or 0,
+            "常用分路JSON": json.dumps(lanes, ensure_ascii=False) if lanes else "[]",
+        })
+    return results
+
+
+def parse_battle_report(data: dict) -> dict:
+    """解析 GetBattleReport 响应为结构化数据。
+
+    返回字典包含:
+      - battle_count: 扁平化的全模式统计（中文键）
+      - season_list: 赛季历史列表（每项已转换为中文键）
+    """
+    bc = data.get("battle_count", {})
+    season_list_raw = data.get("season_list", [])
+
+    # 扁平化 battle_count
+    battle_count = {
+        "匹配总场": bc.get("total_match_games", 0) or 0,
+        "匹配胜场": bc.get("total_match_wins", 0) or 0,
+        "匹配负场": bc.get("total_match_losts", 0) or 0,
+        "大乱斗总场": bc.get("total_arm_games", 0) or 0,
+        "大乱斗胜场": bc.get("total_arm_wins", 0) or 0,
+        "大乱斗负场": bc.get("total_arm_losts", 0) or 0,
+        "单双排总场": bc.get("total_rank_games", 0) or 0,
+        "单双排胜场": bc.get("total_rank_wins", 0) or 0,
+        "单双排负场": bc.get("total_rank_losts", 0) or 0,
+        "组排总场": bc.get("total_teamrank_games", 0) or 0,
+        "组排胜场": bc.get("total_teamrank_wins", 0) or 0,
+        "组排负场": bc.get("total_teamrank_losts", 0) or 0,
+        "全部总场": bc.get("total_games", 0) or 0,
+        "全部胜场": bc.get("total_wins", 0) or 0,
+        "全部负场": bc.get("total_losts", 0) or 0,
+        "人机总场": bc.get("total_ai_games", 0) or 0,
+        "人机胜场": bc.get("total_ai_wins", 0) or 0,
+        "clash总场": bc.get("total_clash_games", 0) or 0,
+    }
+
+    # 转换赛季列表
+    season_list = []
+    for s in season_list_raw:
+        season_list.append({
+            "赛季ID": s.get("sid", 0),
+            "总场次": s.get("total", 0) or 0,
+            "胜场": s.get("wins", 0) or 0,
+            "负场": s.get("losses", 0) or 0,
+            "段位": s.get("tier", 255),
+            "胜点": s.get("win_point", 0) or 0,
+            "队列": s.get("queue", 0) or 0,
+            "组排总场": s.get("team_total", 0) or 0,
+            "组排胜场": s.get("team_wins", 0) or 0,
+            "组排负场": s.get("team_losses", 0) or 0,
+            "组排段位": s.get("team_tier", 255),
+            "组排胜点": s.get("team_win_point", 0) or 0,
+            "组排队列": s.get("team_queue", 0) or 0,
+        })
+
+    return {
+        "battle_count": battle_count,
+        "season_list": season_list,
+    }
 
 
 def parse_battle_summary(battle: dict) -> dict:

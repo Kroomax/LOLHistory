@@ -350,7 +350,10 @@ def run_wegame(args) -> int:
         load_cookies, validate_cookies, merge_cookies,
         fetch_battle_list, fetch_battle_details,
         parse_battle_summary, parse_battle_detail,
+        parse_summoner_info, parse_player_recent_stat,
+        parse_champions, parse_battle_report,
     )
+    from ._data import get_wegame_tier_name
     from ._export import export_csv, export_sqlite
 
     print("=" * 60)
@@ -448,6 +451,104 @@ def run_wegame(args) -> int:
         print("  2. 网络连接是否正常", file=sys.stderr)
         return 1
     print("  [✓] 连接成功")
+
+    # ── 自动获取召唤师信息与生涯统计 ─────────────────────────────────
+    # 在获取对局列表之前自动执行，无需用户管理。
+    # 失败仅警告，不阻断对局导出流程。
+    summoner_profile_data = None
+    summoner_career_data = None
+    try:
+        logger.info("正在获取召唤师信息...")
+        si_data = client.get_summoner_info(area=args.area)
+        summoner_profile_data = parse_summoner_info(si_data)
+
+        # 显示关键信息
+        name = summoner_profile_data.get("召唤师名称", "Unknown")
+        tag = summoner_profile_data.get("标签", "")
+        level = summoner_profile_data.get("等级", 0)
+        tier = summoner_profile_data.get("段位", 0)
+        lp = summoner_profile_data.get("胜点", 0)
+        season_wins = summoner_profile_data.get("赛季胜场", 0)
+        season_total = summoner_profile_data.get("赛季总场次", 0)
+        display_name = f"{name}#{tag}" if tag else name
+        tier_display = get_wegame_tier_name(tier) if tier else "无段位"
+        if lp and tier:
+            tier_display = f"{tier_display} {lp}LP"
+        wr = (season_wins / max(season_total, 1) * 100) if season_total > 0 else 0
+
+        print(f"\n  召唤师: {display_name}")
+        print(f"  等级: {level} | 段位: {tier_display}")
+        if season_total > 0:
+            print(f"  赛季: {season_wins}胜/{season_total - season_wins}负 "
+                  f"({wr:.1f}%) | 总场次: {season_total}")
+
+        # 缓存 openid 用于后续 GetBattleDetail / GetPlayerRecentStat 调用
+        oid = summoner_profile_data.get("openid", "")
+        if oid and not client.openid:
+            client.set_openid(oid)
+            logger.info("已缓存 openid（来自 GetSummonerInfo）")
+
+        # 获取生涯统计（需要 openid）
+        if oid:
+            logger.info("正在获取生涯统计...")
+            sc_data = client.get_player_recent_stat(oid, area=args.area)
+            summoner_career_data = parse_player_recent_stat(sc_data)
+
+            total_kills = summoner_career_data.get("生涯总击杀", 0)
+            total_mvps = summoner_career_data.get("生涯MVP", 0)
+            total_svps = summoner_career_data.get("生涯SVP", 0)
+            total_pentas = summoner_career_data.get("生涯五杀", 0)
+            max_wins = summoner_career_data.get("最长连胜", 0)
+            recent = f"{summoner_career_data.get('近期胜场', 0)}W/{summoner_career_data.get('近期场次', 0)}场"
+            print(f"  生涯: {total_kills}击杀 | MVP×{total_mvps} SVP×{total_svps} "
+                  f"| 五杀×{total_pentas} | 最长连胜{max_wins}")
+            print(f"  近30天: {recent}")
+
+    except WegameApiError as e:
+        logger.warning("获取召唤师/生涯信息失败（不影响对局导出）: %s", e)
+    except Exception as e:
+        logger.warning("获取召唤师/生涯信息时出现意外错误: %s", e)
+
+    # ── 自动获取英雄熟练度（GetChampion） ─────────────────────────────────
+    # 需要 openid，在 get_summoner_info 成功后自动执行。
+    # 失败仅警告，不阻断主流程。
+    champions_data = None
+    oid = client.openid
+    if oid:
+        try:
+            logger.info("正在获取英雄熟练度数据...")
+            champ_raw = client.get_champions(oid, area=args.area)
+            champions_data = parse_champions(champ_raw)
+            champ_count = len(champions_data)
+            # 简要统计：按熟练度排序，显示前 3
+            top_champs = sorted(
+                champions_data, key=lambda x: x.get("熟练度", 0), reverse=True
+            )[:3]
+            top_names = [f"英雄{ch['英雄ID']}({ch['熟练度']})" for ch in top_champs]
+            print(f"  英雄熟练度: {champ_count}个英雄")
+            print(f"  熟练度前3: {', '.join(top_names)}")
+        except WegameApiError as e:
+            logger.warning("获取英雄熟练度失败（不影响对局导出）: %s", e)
+        except Exception as e:
+            logger.warning("获取英雄熟练度时出现意外错误: %s", e)
+    else:
+        logger.info("跳过英雄熟练度获取（缺少 openid）")
+
+    # ── 自动获取赛季战斗报告（GetBattleReport） ──────────────────────────
+    # 使用 puin 认证，不依赖 openid。失败仅警告。
+    battle_report_data = None
+    try:
+        logger.info("正在获取赛季战斗报告...")
+        br_raw = client.get_battle_report(area=args.area)
+        battle_report_data = parse_battle_report(br_raw)
+        bc = battle_report_data.get("battle_count", {})
+        seasons = battle_report_data.get("season_list", [])
+        total_all = bc.get("全部总场", 0)
+        print(f"  战斗报告: 全模式 {total_all} 场, {len(seasons)} 个赛季记录")
+    except WegameApiError as e:
+        logger.warning("获取赛季战斗报告失败（不影响对局导出）: %s", e)
+    except Exception as e:
+        logger.warning("获取赛季战斗报告时出现意外错误: %s", e)
 
     # ── 断点续传 ───────────────────────────────────────────────────────
     cp_file = args.checkpoint_file or "wegame_checkpoint.json"
@@ -591,7 +692,12 @@ def run_wegame(args) -> int:
     if not args.no_sqlite:
         sp = str(out / f"{prefix}.db")
         export_sqlite(parsed, detail_data if detail_data else None, sp,
-                      self_openid=client.openid or "")
+                      self_openid=client.openid or "",
+                      summoner_info=summoner_profile_data,
+                      summoner_career=summoner_career_data,
+                      puin=client.puin,
+                      champions=champions_data,
+                      battle_report=battle_report_data)
         results["sqlite"] = sp
 
     for fmt_name, filepath in results.items():

@@ -35,13 +35,13 @@ MVP 结构，7 个模块各司其职，方法之间互不引用：
 
 | 文件 | 用途 |
 |------|------|
-| `__main__.py` | CLI（argparse）+ 方法路由 |
-| `_data.py` | 共享常量：`QUEUE_NAMES`(96)、`MAP_NAMES`(17)、`TFT_QUEUE_IDS`、工具函数 |
+| `__main__.py` | CLI（argparse）+ 方法路由 + WeGame 流程编排（含自动获取召唤师/英雄熟练度/赛季报告/生涯统计） |
+| `_data.py` | 共享常量：`QUEUE_NAMES`(96)、`MAP_NAMES`(17)、`TFT_QUEUE_IDS`、`WEGAME_TIER_NAMES`(9)、工具函数 |
 | `_lcu.py` | 方法1+2：lockfile 4策略发现 → LCU ApiClient → 分页获取 → 解析 |
-| `_wegame.py` | 方法3：Cookie 认证 → WegameApiClient → `GetBattleList`(分页) + `GetBattleDetail`(详情) |
+| `_wegame.py` | 方法3：Cookie 认证 → WegameApiClient → 6 个 API 端点 + 6 个解析函数 |
 | `_cookie_extract.py` | 方法3 Cookie获取：从 Fiddler/Charles 导出的 HAR/raw/curl 文件中提取 cookie |
-| `_export.py` | 导出：CSV（UTF-8 BOM）+ SQLite（`match_summary` 35列 + `match_detail` 32列） |
-| `_analysis.py` | 数据分析：从 SQLite 读取 → 30+ 维度分析 → 生成单个交互式 HTML 报告 |
+| `_export.py` | 导出：CSV（UTF-8 BOM）+ SQLite（8 张表） |
+| `_analysis.py` | 数据分析：从 SQLite 读取 → 30+ 维度分析 → 生成单个交互式 HTML 报告（6 章，~30 图表） |
 
 方法4（Riot官方API，国服不可用）未实现。LCU约100~200场，WeGame约500场且含段位/10人装备符文。
 
@@ -57,12 +57,28 @@ MVP 结构，7 个模块各司其职，方法之间互不引用：
 
 ## WeGame API 关键点
 
-### 两个端点
+### 六个端点
 
-| 端点 | 用途 | account_type | id 字段 |
-|------|------|:---:|:---:|
-| `GetBattleList` | 分页对局列表（基础KDA/位置/输赢） | 1 | `puin`（数字UID） |
-| `GetBattleDetail` | 单局10人完整数据（装备/符文/ban） | 2 | `openid`（Base64） |
+| 端点 | 用途 | account_type | id 字段 | 备注 |
+|------|------|:---:|:---:|------|
+| `GetBattleList` | 分页对局列表（基础KDA/位置/输赢） | 1 | `puin`（数字UID） | |
+| `GetBattleDetail` | 单局10人完整数据（装备/符文/ban） | 2 | `openid`（Base64） | |
+| `GetSummonerInfo` | 召唤师信息 + 赛季段位 + openid | 1 | `puin` | **trpc-caller: `TftBattle`**（非默认 `LolBattle`） |
+| `GetPlayerRecentStat` | 近30天统计 + 生涯总数据 + 常用英雄/位置 | 2 | `openid` | 需要先获取 openid |
+| `GetChampion` | 全部172英雄熟练度（场次/胜率/常用分路/赛季数据） | 2 | `openid`（Base64） | `flag=2`，需要 openid |
+| `GetBattleReport` | 全模式总览统计 + 26赛季段位历史 | 1 | `puin` | `sids=[255]` 获取所有赛季 |
+
+### 自动流程
+
+运行 `--method wegame`（默认）时，**自动执行**（无需用户管理）：
+
+1. 连接测试 → **自动调用 `GetSummonerInfo`** → 显示召唤师等级/段位/胜率 → 缓存 openid
+2. **自动调用 `GetChampion`**（使用 openid）→ 显示 172 英雄熟练度 Top 3
+3. **自动调用 `GetBattleReport`**（使用 puin）→ 显示全模式总场次 + 赛季数
+4. **自动调用 `GetPlayerRecentStat`**（使用 openid）→ 显示生涯击杀/MVP/五杀/连胜
+5. 继续原有对局列表获取流程
+
+步骤 2-4 失败仅 `logger.warning`，不阻断对局导出。数据自动写入 8 张 SQLite 表。
 
 ### 认证
 
@@ -85,23 +101,52 @@ Cookie（与 WeGame 助手页共享 session），必需 4 个：`puin`, `pkey`, 
 - `count` 最大 10（超过返回 `8000002`）；offset ≥ 500 返回空
 - Cookie 过期返回 `8025009`（登录信息过期），需重新获取
 
+### `_post()` extra_headers 模式
+
+`GetSummonerInfo` 需要 `trpc-caller: wegame.pallas.web.TftBattle`（其他接口用 `LolBattle`）。
+通过 `_post(path, body, extra_headers={"trpc-caller": "..."})` 临时覆盖请求头，
+内部用 save/restore + finally 保证不影响后续请求。
+
+### SQLite 表结构（8 张表）
+
+| 表 | 主键 | 策略 | 用途 |
+|---|------|------|------|
+| `match_summary` | game_id | INSERT OR REPLACE | 每局对局摘要（35列） |
+| `match_detail` | AUTOINCREMENT + UNIQUE(game_id, summoner_name) | INSERT OR IGNORE | 每局10人完整数据（32列） |
+| `summoner_profile` | puin | INSERT OR REPLACE | 召唤师当前快照（55列）：基本信息 + 赛季段位 + 近30天 + 生涯总计 |
+| `summoner_snapshot` | AUTOINCREMENT + UNIQUE(puin, fetched_at) | INSERT OR IGNORE | 召唤师历史快照（16列）：追踪等级/段位/LP/MVP/SVP 变化 |
+| `champion_mastery` | (puin, champion_id) | INSERT OR REPLACE | 172英雄熟练度快照（12列）：场次/胜率/熟练度/常用分路/赛季数据 |
+| `champion_mastery_snapshot` | AUTOINCREMENT + UNIQUE(puin, champion_id, fetched_at) | INSERT OR IGNORE | 英雄熟练度历史（7列）：追踪每个英雄场次/胜场/赛季场次变化 |
+| `season_history` | (puin, sid) | INSERT OR REPLACE | 赛季段位历史（14列）：每赛季排位+组排的场次/段位/胜点 |
+| `career_overview` | puin | INSERT OR REPLACE | 生涯全模式总览（19列）：匹配/大乱斗/单双排/组排/人机各模式场次 |
+
+### WeGame 段位映射
+
+```python
+WEGAME_TIER_NAMES = {0: "未定级", 1: "钻石", 2: "翡翠", 3: "铂金",
+                     4: "黄金", 5: "白银", 6: "超凡大师", 7: "傲世宗师", 8: "最强王者"}
+```
+
+注意：WeGame 编号方向与 Riot 不同——非大师段位数值越小段位越高（1=钻石，5=白银），大师+从 6 递增。
+
 ## 数据分析 (_analysis.py)
 
 CLI: `python -m lolhistory --analyze [--db wegame_matches.db] [--output report.html] [--session-gap 2.0]`
 
 从 SQLite (`match_summary`) 读取全量对局 → 30+ 维度分析 → 输出单个静态交互式 HTML。
 
-### 分析维度（7 大板块）
+### 报告结构（6 大板块）
 
-| 板块 | 内容 |
-|------|------|
-| 总览 | 场次/胜率/KDA/场均经济/五杀/四杀/MVP/SVP/场均评分/英雄数（17 卡片） |
-| 胜率分析 | 星期/小时/红蓝方/位置/KDA分桶/时长四分位/神秘因子方差排名/荣誉影响 |
-| 英雄分析 | Top 5 拿手英雄多维雷达图（逐维度比率归一化）+ 英雄池堆叠图 |
-| 段位分析 | LP 累计趋势 + 10 场滚动胜率 + 段位分布 + KDA 随段位变化 |
-| 出勤分析 | 日历热力图（GitHub 风格）+ 每日胜率 + 每日 LP 变化 |
-| Session 分析 | 连续游戏规模分布 + 最后一局结束时间分布 + 首局 vs 末局胜率 |
-| 心理与风格 | 情绪韧性（连败后反弹）/ 连胜连败 / 抗压局 / carry 局 / 前期后期能力 / 发挥稳定性 / 位置灵活性 / 投降率 / AFK 影响 / 经济效率 |
+报告按以下顺序组织，每章双列网格中卡片数为偶数，无空位：
+
+| 章节 | 导航 ID | 内容 |
+|------|---------|------|
+| 一、总览 | `#overview` | 17 hero 卡片：场次/胜率/KDA/场均经济/五杀/四杀/MVP/SVP/最长连胜/出勤率/英雄池/招牌英雄/最高&当前段位 |
+| 二、胜率因子 | `#winrate` | 8 卡片：星期几 → 时段 → 红蓝方 → 位置 → 对局时长 → LP区间 → 胜率极差排名（全宽）→ 荣誉与胜率（全宽） |
+| 三、游戏节奏 | `#game-rhythm` | 6 卡片全部双列：轮次规模分布 → 首局开始时间 → 末局结束时间 → 轮次内第N局胜率 → '再来一局'陷阱 → 输后与赢后胜率 |
+| 四、游戏心理 | `#psychology` | 5 卡片：胜负连势 → 发挥稳定性 → 挂机影响 → 投降分析 + 过度自信与救赎效应（全宽） |
+| 五、玩家水平 | `#player-level` | 6 卡片：英雄池分布 → 拿手英雄雷达（全宽）→ LP爬分效率 → 多杀含金量 → Carry依赖度画像（全宽）→ 经济效率分析 |
+| 六、出勤日历 | `#attendance` | 7 卡片：关键日期（全宽）→ 出勤热力图（全宽）→ 10场滚动胜率 → 时段热力图（全宽）→ 对局数量热力图（全宽）→ 段位LP趋势（全宽）→ 每日LP变化 |
 
 ### 关键实现细节
 
@@ -112,6 +157,20 @@ CLI: `python -m lolhistory --analyze [--db wegame_matches.db] [--output report.h
 - **Chart.js v4 CDN**: bootcdn → jsdelivr → unpkg 三级 fallback（国内友好）
 - **所有标签中文化**: 仅保留 KDA/GPM/LP 等常用缩写
 - **无新依赖**: 仅使用 stdlib（`sqlite3`, `json`, `datetime`, `collections`, `math`, `statistics`）
+
+### HTML 生成函数映射
+
+| 章节 | 函数 | 说明 |
+|------|------|------|
+| 总览 | `_build_hero(ov)` | 17 hero 卡片 + 综合评语 |
+| 胜率因子 | `_build_section_winrate(r)` | 8 卡片，全宽：胜率极差排名 + 荣誉与胜率 |
+| 游戏节奏 | `_build_section_game_rhythm(r)` | 6 卡片全部双列，包含 session 图表 + tilt |
+| 游戏心理 | `_build_section_psychology(r)` | 5 卡片，全宽：过度自信与救赎效应 |
+| 玩家水平 | `_build_section_player_level(r)` | 6 卡片，全宽：拿手英雄雷达 + Carry依赖度画像 |
+| 出勤日历 | `_build_section_attendance(r)` | 7 卡片，全宽：关键日期/热力图/LP趋势 |
+
+导航由 `_build_nav()` 生成，CSS 由 `_build_css()` 生成，所有图表 JS 由 `_build_all_charts(r)` 生成。
+调整章节内容时修改对应 `_build_section_*` 函数，调整顺序修改 `_build_html()` 中的列表。
 
 ### 图表 JS 代码调试经验
 
