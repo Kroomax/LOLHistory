@@ -12,6 +12,8 @@ from datetime import datetime
 from collections import defaultdict, Counter
 from pathlib import Path
 
+from ._data import CHAMPION_DISPLAY
+
 # ── 常量 ────────────────────────────────────────────────────────────────────
 
 # WeGame API 段位数值 → (标准索引, 中文名)
@@ -38,66 +40,7 @@ _TIER_INDEX: dict[str, int] = {
     "5": 5, "6": 6, "7": 7, "8": 8, "9": 9,
 }
 
-# 英雄 ID → 名称映射（常用英雄 + 数据中出现的）
-_CHAMPION_NAMES: dict[int, str] = {
-    1: "Annie 安妮", 2: "Olaf 奥拉夫", 3: "Galio 加里奥",
-    4: "Twisted Fate 卡牌", 5: "Xin Zhao 赵信", 6: "Urgot 厄加特",
-    7: "LeBlanc 乐芙兰", 8: "Vladimir 弗拉基米尔", 9: "Fiddlesticks 费德提克",
-    10: "Kayle 凯尔", 11: "Master Yi 易", 12: "Alistar 阿利斯塔",
-    13: "Ryze 瑞兹", 14: "Sion 赛恩", 15: "Sivir 希维尔",
-    16: "Soraka 索拉卡", 17: "Teemo 提莫", 18: "Tristana 崔丝塔娜",
-    19: "Warwick 沃里克", 20: "Nunu 努努", 21: "Miss Fortune 厄运小姐",
-    22: "Ashe 艾希", 23: "Tryndamere 泰达米尔", 24: "Jax 贾克斯",
-    25: "Morgana 莫甘娜", 26: "Zilean 基兰", 27: "Singed 辛吉德",
-    28: "Evelynn 伊芙琳", 29: "Twitch 图奇", 30: "Karthus 卡尔萨斯",
-    31: "Cho'Gath 科加斯", 32: "Amumu 阿木木", 33: "Rammus 拉莫斯",
-    34: "Anivia 艾尼维亚", 35: "Shaco 萨科", 36: "Dr. Mundo 蒙多",
-    37: "Sona 娑娜", 38: "Kassadin 卡萨丁", 39: "Irelia 艾瑞莉娅",
-    40: "Janna 迦娜", 41: "Gangplank 普朗克", 42: "Corki 库奇",
-    43: "Karma 卡尔玛", 44: "Taric 塔里克", 45: "Veigar 维迦",
-    48: "Trundle 特朗德尔", 50: "Swain 斯维因", 51: "Caitlyn 凯特琳",
-    53: "Blitzcrank 布里茨", 54: "Malphite 墨菲特", 55: "Katarina 卡特琳娜",
-    56: "Nocturne 魔腾", 57: "Maokai 茂凯", 58: "Renekton 雷克顿",
-    59: "Jarvan IV 嘉文四世", 60: "Elise 伊莉丝", 61: "Orianna 奥莉安娜",
-    62: "Wukong 孙悟空", 63: "Brand 布兰德", 64: "Lee Sin 李青",
-    67: "Vayne 薇恩", 68: "Rumble 兰博", 69: "Cassiopeia 卡西奥佩娅",
-    72: "Skarner 斯卡纳", 74: "Heimerdinger 黑默丁格", 75: "Nasus 内瑟斯",
-    76: "Nidalee 奈德丽", 77: "Udyr 乌迪尔", 78: "Poppy 波比",
-    79: "Gragas 古拉加斯", 80: "Pantheon 潘森", 81: "Ezreal 伊泽瑞尔",
-    82: "Mordekaiser 莫德凯撒", 83: "Yorick 约里克", 84: "Akali 阿卡丽",
-    85: "Kennen 凯南", 86: "Garen 盖伦", 89: "Leona 蕾欧娜",
-    90: "Malzahar 玛尔扎哈", 91: "Talon 泰隆", 92: "Riven 锐雯",
-    96: "Kog'Maw 克格莫", 98: "Shen 慎", 99: "Lux 拉克丝",
-    101: "Xerath 泽拉斯", 102: "Shyvana 希瓦娜", 103: "Ahri 阿狸",
-    104: "Graves 格雷福斯", 105: "Fizz 菲兹", 106: "Volibear 沃利贝尔",
-    107: "Rengar 雷恩加尔", 110: "Varus 韦鲁斯", 111: "Nautilus 诺提勒斯",
-    112: "Viktor 维克托", 113: "Sejuani 瑟庄妮", 114: "Fiora 菲奥娜",
-    115: "Ziggs 吉格斯", 117: "Lulu 璐璐", 119: "Draven 德莱文",
-    120: "Hecarim 赫卡里姆", 121: "Kha'Zix 卡兹克", 122: "Darius 德莱厄斯",
-    126: "Jayce 杰斯", 127: "Lissandra 丽桑卓", 131: "Diana 黛安娜",
-    133: "Quinn 奎因", 134: "Syndra 辛德拉", 136: "Aurelion Sol 奥瑞利安·索尔",
-    141: "Kayn 凯隐", 142: "Zoe 佐伊", 143: "Zyra 婕拉",
-    145: "Kai'Sa 虚空之女", 147: "Seraphine 萨勒芬妮",
-    150: "Gnar 纳尔", 154: "Zac 扎克", 157: "Yasuo 亚索",
-    161: "Vel'Koz 维克兹", 163: "Taliyah 塔莉垭", 164: "Camille 卡蜜尔",
-    166: "Akshan 阿克尚", 200: "Bel'Veth 卑尔维斯", 201: "Braum 布隆",
-    202: "Jhin 烬", 203: "Kindred 千珏", 221: "Vel'Koz 维克兹",
-    222: "Jinx 金克丝", 223: "Tahm Kench 塔姆", 234: "Viego 佛耶戈",
-    235: "Senna 赛娜", 236: "Lucian 卢锡安", 238: "Zed 劫",
-    240: "Kled 克烈", 245: "Ekko 艾克", 246: "Qiyana 奇亚娜",
-    254: "Vi 蔚", 266: "Aatrox 亚托克斯", 267: "Nami 娜美",
-    268: "Azir 阿兹尔", 350: "Yuumi 悠米", 360: "Samira 莎弥拉",
-    412: "Thresh 锤石", 420: "K'Sante 奎桑提", 421: "Rek'Sai 雷克塞",
-    427: "Ivern 艾翁", 429: "Kalista 卡莉丝塔", 432: "Bard 巴德",
-    497: "Rakan 洛", 498: "Xayah 霞", 516: "Ornn 奥恩",
-    517: "Sylas 塞拉斯", 518: "Neeko 妮蔻", 523: "Aphelios 厄斐琉斯",
-    526: "Rell 芮尔", 555: "Pyke 派克", 711: "Gwen 格温",
-    777: "Yone 永恩", 800: "Hwei 慧", 875: "Sett 瑟提",
-    876: "Lillia 莉莉娅", 887: "Yunara 云娜拉", 888: "Aurora 奥罗拉",
-    893: "Renata Glasc 烈娜塔", 895: "Nilah 尼菈", 897: "Naafiri 纳亚菲利",
-    901: "Ambessa 安蓓萨", 902: "Smolder 斯莫德", 910: "Briar 布蕾尔",
-    950: "Milio 米利欧", 951: "Zeri 泽丽", 952: "Vex 薇古丝",
-}
+# 英雄 ID → 名称映射已迁移至 _data.CHAMPION_DISPLAY（WeGame 官方配置）
 
 # Chart.js 配色
 _CHART_COLORS = [
@@ -115,7 +58,7 @@ _POSITION_ORDER = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY", "Invalid"]
 
 def _champion_name(cid: int) -> str:
     """返回英雄中文名，未知则返回 ID。"""
-    name = _CHAMPION_NAMES.get(cid)
+    name = CHAMPION_DISPLAY.get(cid)
     if name:
         # 提取中文部分
         parts = name.split(" ", 1)
@@ -124,7 +67,7 @@ def _champion_name(cid: int) -> str:
 
 def _champion_name_en(cid: int) -> str:
     """返回英雄英文名，未知则返回 ID。"""
-    name = _CHAMPION_NAMES.get(cid)
+    name = CHAMPION_DISPLAY.get(cid)
     if name:
         return name.split(" ", 1)[0]
     return f"Champion{cid}"
@@ -215,6 +158,30 @@ def _load_matches(db_path: str) -> list[dict]:
         matches.append(m)
 
     return matches
+
+
+def _load_champion_mastery(db_path: str) -> list[dict]:
+    """从 SQLite 加载 champion_mastery 表数据，按总场次降序。"""
+    if not Path(db_path).exists():
+        return []
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    try:
+        cur.execute("SELECT COUNT(*) FROM champion_mastery")
+        if cur.fetchone()[0] == 0:
+            return []
+    except sqlite3.OperationalError:
+        return []
+
+    cur.execute("SELECT * FROM champion_mastery WHERE total_games > 0 ORDER BY total_games DESC")
+    rows = cur.fetchall()
+    conn.close()
+
+    return [dict(row) for row in rows]
+
 
 def _filter_ranked(matches: list[dict]) -> list[dict]:
     """仅保留排位单双排 (queue_id=420)。"""
@@ -820,44 +787,82 @@ def _analyze_champion_radar(matches: list[dict]) -> dict:
         "summary": summary,
     }
 
-def _analyze_champion_pool(matches: list[dict]) -> dict:
-    """英雄池分析。"""
-    champ_counts = Counter(m["champion_id"] for m in matches)
-    total = len(matches)
+def _analyze_champion_pool(matches: list[dict], champion_mastery: list[dict] | None = None) -> dict:
+    """英雄池分析。优先使用 champion_mastery 表数据（全生命周期统计），
+    回退到 match_summary 数据。"""
+    if champion_mastery:
+        # ── 使用 champion_mastery 表（全生命周期） ──
+        total_games_all = sum(c["total_games"] for c in champion_mastery)
 
-    # 英雄使用频率（仅展示对局数 ≥3 的英雄，最多 15 个）
-    freq = []
-    for cid, cnt in champ_counts.most_common():
-        if cnt < 3:
-            continue
-        wins = sum(1 for m in matches if m["champion_id"] == cid and m["win"])
-        freq.append({
-            "champion_id": cid, "name": _champion_name(cid),
-            "games": cnt, "wins": wins, "losses": cnt - wins,
-            "freq_pct": round(cnt / total * 100, 1),
-        })
-        if len(freq) >= 15:
-            break
+        freq = []
+        for c in champion_mastery:
+            games = c["total_games"]
+            if games < 3:
+                continue
+            cid = c["champion_id"]
+            wins = c["wins"]
+            wr = c.get("win_rate") or 0
+            freq.append({
+                "champion_id": cid, "name": _champion_name(cid),
+                "games": games, "wins": wins, "losses": games - wins,
+                "freq_pct": round(games / total_games_all * 100, 1) if total_games_all > 0 else 0,
+                "win_rate": round(wr, 1),
+            })
+            if len(freq) >= 15:
+                break
 
-    # 绝活指数: 最常用英雄占比
-    top_game_pct = champ_counts.most_common(1)[0][1] / total * 100 if champ_counts else 0
+        top_c = champion_mastery[0]
+        top_game_pct = round(top_c["total_games"] / total_games_all * 100, 1) if total_games_all > 0 else 0
+        unique_count = len(champion_mastery)
 
-    # 位置灵活性
-    champ_positions = defaultdict(set)
-    for m in matches:
-        champ_positions[m["champion_id"]].add(m["position"])
-    avg_positions = statistics.mean([len(ps) for ps in champ_positions.values()]) if champ_positions else 0
+        # 位置灵活性（仍从 match_summary 获取）
+        champ_positions = defaultdict(set)
+        for m in matches:
+            champ_positions[m["champion_id"]].add(m["position"])
+        avg_positions = statistics.mean([len(ps) for ps in champ_positions.values()]) if champ_positions else 0
 
-    if top_game_pct >= 80:
-        summary = f"你是典型的绝活玩家——{_champion_name(champ_counts.most_common(1)[0][0])} 占了 {top_game_pct:.0f}% 的对局。英雄池虽浅，但专精也是一种力量。"
-    elif top_game_pct >= 50:
-        summary = f"你有明确的招牌英雄（占比{top_game_pct:.0f}%），同时尝试了 {len(champ_counts)} 个不同英雄，池子不算浅。"
+        if top_game_pct >= 80:
+            summary = f"你是典型的绝活玩家——{_champion_name(top_c['champion_id'])} 占了 {top_game_pct:.0f}% 的对局。英雄池虽浅，但专精也是一种力量。"
+        elif top_game_pct >= 50:
+            summary = f"你有明确的招牌英雄（占比{top_game_pct:.0f}%），同时使用了 {unique_count} 个不同英雄，池子不算浅。"
+        else:
+            summary = f"英雄海！{unique_count} 个不同英雄轮换，平均每个英雄跨 {avg_positions:.1f} 个位置，是真正的全能选手。"
     else:
-        summary = f"英雄海！{len(champ_counts)} 个不同英雄轮换，平均每个英雄跨 {avg_positions:.1f} 个位置，是真正的全能选手。"
+        # ── 回退：match_summary 数据 ──
+        champ_counts = Counter(m["champion_id"] for m in matches)
+        total = len(matches)
+
+        freq = []
+        for cid, cnt in champ_counts.most_common():
+            if cnt < 3:
+                continue
+            wins = sum(1 for m in matches if m["champion_id"] == cid and m["win"])
+            freq.append({
+                "champion_id": cid, "name": _champion_name(cid),
+                "games": cnt, "wins": wins, "losses": cnt - wins,
+                "freq_pct": round(cnt / total * 100, 1),
+                "win_rate": round(wins / cnt * 100, 1),
+            })
+            if len(freq) >= 15:
+                break
+
+        top_game_pct = champ_counts.most_common(1)[0][1] / total * 100 if champ_counts else 0
+
+        champ_positions = defaultdict(set)
+        for m in matches:
+            champ_positions[m["champion_id"]].add(m["position"])
+        avg_positions = statistics.mean([len(ps) for ps in champ_positions.values()]) if champ_positions else 0
+
+        if top_game_pct >= 80:
+            summary = f"你是典型的绝活玩家——{_champion_name(champ_counts.most_common(1)[0][0])} 占了 {top_game_pct:.0f}% 的对局。英雄池虽浅，但专精也是一种力量。"
+        elif top_game_pct >= 50:
+            summary = f"你有明确的招牌英雄（占比{top_game_pct:.0f}%），同时尝试了 {len(champ_counts)} 个不同英雄，池子不算浅。"
+        else:
+            summary = f"英雄海！{len(champ_counts)} 个不同英雄轮换，平均每个英雄跨 {avg_positions:.1f} 个位置，是真正的全能选手。"
 
     return {
         "freq": freq,
-        "unique_count": len(champ_counts),
+        "unique_count": unique_count if champion_mastery else len(champ_counts),
         "top_pct": round(top_game_pct, 1),
         "avg_positions": round(avg_positions, 1),
         "summary": summary,
@@ -2747,9 +2752,10 @@ def _build_all_charts(r: dict) -> str:
     # 英雄池
     pool = r.get("champion_pool", {})
     freq = pool.get("freq", [])
+    pool_labels = [f"{item['name']} {item.get('win_rate', 0):.0f}%" for item in freq]
     parts.append(f"""new Chart(document.getElementById('chart-pool'),{{
   type:'bar',
-  data:{{labels:{_chart_json([f['name'] for f in freq])},
+  data:{{labels:{_chart_json(pool_labels)},
     datasets:[
       {{label:'胜',data:{_chart_json([f['wins'] for f in freq])},backgroundColor:'rgba(46,204,113,0.7)',borderColor:'#2ecc71',borderWidth:1}},
       {{label:'负',data:{_chart_json([f['losses'] for f in freq])},backgroundColor:'rgba(231,76,60,0.4)',borderColor:'#e74c3c',borderWidth:1}}
@@ -3268,6 +3274,7 @@ def generate_report(
     dated_output = out_path.with_name(f"{stem}_{date_suffix}{ext}")
 
     matches = _load_matches(db_path)
+    champion_mastery = _load_champion_mastery(db_path)
     if not matches:
         html = _build_empty_report(db_abs)
         dated_output.write_text(html, encoding="utf-8")
@@ -3285,7 +3292,7 @@ def generate_report(
         "mystery_factor": _analyze_mystery_factor(matches),
         "honors_impact": _analyze_honors_impact(matches),
         "champion_radar": _analyze_champion_radar(matches),
-        "champion_pool": _analyze_champion_pool(matches),
+        "champion_pool": _analyze_champion_pool(matches, champion_mastery),
         "rank_progression": _analyze_rank_progression(matches),
         "attendance": _analyze_attendance(matches),
         "sessions": _analyze_sessions(matches, session_gap_hours),
