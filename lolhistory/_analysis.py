@@ -254,7 +254,7 @@ def _filter_ranked(matches: list[dict]) -> list[dict]:
 
 # ── 总览分析 ─────────────────────────────────────────────────────────────────
 
-def _analyze_overview(matches: list[dict]) -> dict:
+def _analyze_overview(matches: list[dict], summoner_profile: dict | None = None) -> dict:
     """职业生涯总览统计。"""
     if not matches:
         return {"total_games": 0, "summary": "暂无对局数据。"}
@@ -281,6 +281,14 @@ def _analyze_overview(matches: list[dict]) -> dict:
     avg_deaths = round(total_deaths / total, 1) if total > 0 else 0
     avg_assists = round(total_assists / total, 1) if total > 0 else 0
     avg_gold = round(total_gold / total) if total > 0 else 0
+    max_kills = max(m["kills"] for m in matches) if matches else 0
+    # 生涯单局最高击杀（WeGame profile 数据优先）
+    if summoner_profile:
+        career_max = summoner_profile.get("most_kills_num", 0) or 0
+        max_kills = max(max_kills, career_max)
+        max_turrets = summoner_profile.get("most_turrets_kill_num", 0) or 0
+    else:
+        max_turrets = 0
 
     ranked = _filter_ranked(matches)
     first_date = matches[0]["_dt"]
@@ -329,7 +337,7 @@ def _analyze_overview(matches: list[dict]) -> dict:
     pos_win_counts = Counter(m["position"] for m in matches if m["win"] and m.get("map_id") == 11)
     unique_positions = sum(1 for cnt in pos_win_counts.values() if cnt >= 20)
 
-    # 最长连胜
+    # 最长连胜（比赛历史）
     longest_win_streak = 0
     cur_streak = 0
     for m in matches:
@@ -349,8 +357,16 @@ def _analyze_overview(matches: list[dict]) -> dict:
     else:
         rating = "📉 需要调整——胜率偏低，建议从下方分析中找出拖累胜率的核心因子。"
 
-    # 挑选3个最值得评论的突出指标
+    # 挑选6个最值得评论的突出指标
     metric_comments = []
+    # 招牌英雄（必定点名）
+    cname_early = _champion_name(most_played[0])
+    metric_comments.append(f"招牌英雄{cname_early}（{most_played[1]}场）")
+    # 英雄池
+    if hero_pool >= 5:
+        metric_comments.append(f"英雄池深达{hero_pool}个高胜率英雄，BP阶段难以被针对")
+    elif hero_pool == 1:
+        metric_comments.append("绝活专精玩家，一招鲜吃遍天")
     # MVP率
     mvp_rate = round(total_mvps / total * 100, 1) if total > 0 else 0
     if mvp_rate >= 10:
@@ -362,41 +378,41 @@ def _analyze_overview(matches: list[dict]) -> dict:
     if svp_rate >= 15:
         metric_comments.append(f"SVP率达{svp_rate}%（{total_svps}次），实力在线但团队配合欠佳")
     # 最长连胜
-    if longest_win_streak >= 8:
+    if longest_win_streak >= 10:
         metric_comments.append(f"最长打出过{longest_win_streak}连胜，上分爆发力强")
-    # 英雄池
-    if hero_pool >= 5:
-        metric_comments.append(f"英雄池深达{hero_pool}个高胜率英雄，BP阶段难以被针对")
-    elif hero_pool == 1:
-        metric_comments.append("绝活专精玩家，一招鲜吃遍天")
     # 综合KDA
     if overall_kda >= 3:
         metric_comments.append(f"综合KDA高达{overall_kda}，击杀参与度高且死亡控制得当")
     # 五杀
-    if total_penta > 3:
+    if total_penta >= 5:
         metric_comments.append(f"斩获{total_penta}次五杀，团战收割能力极强")
     # 四杀
-    if total_quadra >= 3:
-        metric_comments.append(f"{total_quadra}次四杀，离五杀只差临门一脚")
+    if total_quadra >= 5:
+        metric_comments.append(f"斩获{total_quadra}次四杀，离五杀只差临门一脚")
     # 位置灵活度（仅计胜场≥20的位置）
-    if unique_positions >= 3:
+    if unique_positions >= 4:
         metric_comments.append(f"横跨{unique_positions}个位置，阵容适配力极强")
     # 场均击杀
     if avg_kills >= 8:
         metric_comments.append(f"场均{avg_kills}击杀，线上压制力拉满")
+    # 单局最高击杀
+    if max_kills >= 20:
+        metric_comments.append(f"单局最高斩获{max_kills}杀，个人能力上限极高")
+    # 单局最多推塔
+    if max_turrets >= 8:
+        metric_comments.append(f"单局最多推塔{max_turrets}座，拆塔机器般的推进节奏")
     # 出勤率
     if attendance >= 50:
-        metric_comments.append(f"出勤率{attendance}%，游戏习惯规律稳定")
-    # 取前3个，用中文分号分隔
-    highlight = "；".join(metric_comments[:3])
+        metric_comments.append(f"出勤率高达{attendance}%，游戏习惯规律稳定")
+    # 取前6个，用中文分号分隔
+    highlight = "；".join(metric_comments[:6])
     if highlight:
         rating += f" {highlight}。"
 
     # 概要
-    cname = _champion_name(most_played[0])
     summary = (
         f"共 {total} 场对局（{days_active} 个活跃日），胜率 {wr}%，整体 KDA {overall_kda}。"
-        f"招牌英雄 {cname}（{most_played[1]}场），当前段位 {current_tier_display}。"
+        f"招牌英雄 {cname_early}（{most_played[1]}场），当前段位 {current_tier_display}。"
         f"场均 {avg_kills} 杀 / {avg_deaths} 死 / {avg_assists} 助攻，场均经济 {avg_gold:,} 金币，"
         f"{total_mvps} 次 MVP，{total_svps} 次 SVP。"
     )
@@ -415,10 +431,11 @@ def _analyze_overview(matches: list[dict]) -> dict:
         "days_active": days_active, "days_since_first": days_since_first,
         "attendance": attendance,
         "highest_tier": highest_tier_display, "current_tier": current_tier_display,
-        "most_played_champ": most_played[0], "most_played_champ_name": cname,
+        "most_played_champ": most_played[0], "most_played_champ_name": cname_early,
         "most_played_games": most_played[1],
         "hero_pool": hero_pool, "unique_positions": unique_positions,
-        "longest_win_streak": longest_win_streak,
+        "longest_win_streak": longest_win_streak, "max_kills": max_kills,
+        "max_turrets": max_turrets,
         "overall_rating": rating,
         "summary": summary,
     }
@@ -2531,6 +2548,9 @@ def _calc_mode_distribution(career):
 
 def _calc_records_board(profile):
     """生涯单局纪录榜。"""
+    long_sec = profile.get("longest_game_num", 0) or 0
+    long_min = int(long_sec / 60)
+    long_display = f"{long_min}min" if long_min > 0 else ""
     pairs = [
         ("单局最高击杀", "most_kills_num", ""),
         ("单局最高助攻", "most_assists_num", ""),
@@ -2539,18 +2559,20 @@ def _calc_records_board(profile):
         ("单局最高经济", "most_gold_earned_num", "num"),
         ("单局最高补刀", "most_minions_kill_num", ""),
         ("单局最多推塔", "most_turrets_kill_num", ""),
-        ("单局最高评分", "highest_game_score", ""),
-        ("超神次数", "total_god_likes", ""),
+        ("生涯总超神", "total_god_likes", ""),
     ]
     records = []
     for label, key, fmt in pairs:
         val = profile.get(key)
-        if val is not None:
+        if val is not None and val != 0:
             if fmt == "num":
                 display = f"{val:,}" if val >= 1000 else str(val)
             else:
                 display = str(val)
             records.append({"label": label, "value": display})
+    # 生涯最长游戏时间（独立字段，整数分钟）
+    if long_display:
+        records.append({"label": "生涯最长游戏时间", "value": long_display})
     return records
 
 
@@ -2615,11 +2637,12 @@ def _build_css() -> str:
 --blue2:#4a9eff;--purple:#a855f7;--orange:#f59e0b;
 }
 *{box-sizing:border-box;margin:0;padding:0}
+html{scroll-padding-top:92px;scroll-behavior:smooth}
 body{background:var(--bg);color:var(--text);font-family:"Microsoft YaHei","PingFang SC",sans-serif;line-height:1.6;min-height:100vh}
 a{color:var(--blue);text-decoration:none}
-nav{position:sticky;top:0;z-index:100;background:rgba(10,14,20,0.95);backdrop-filter:blur(12px);border-bottom:1px solid var(--border);padding:12px 24px;display:flex;align-items:center;gap:8px;overflow-x:auto;white-space:nowrap}
-nav .logo{color:var(--gold);font-weight:700;font-size:16px;margin-right:16px}
-nav a{color:var(--text2);font-size:13px;padding:6px 12px;border-radius:6px;transition:all .2s}
+nav{position:sticky;top:0;z-index:100;background:rgba(10,14,20,0.25);backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:14px 28px;display:flex;justify-content:center;align-items:center;gap:10px;overflow-x:auto;white-space:nowrap}
+nav .logo{color:var(--gold);font-weight:700;font-size:18px;margin-right:20px}
+nav a{color:var(--text2);font-size:14px;padding:8px 14px;border-radius:6px;transition:all .2s}
 nav a:hover{color:var(--text);background:var(--card)}
 main{max-width:1280px;margin:0 auto;padding:24px 20px 60px}
 .hero{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:32px}
@@ -2665,7 +2688,7 @@ footer span{color:var(--gold)}
 body{position:relative}
 body::before{content:'';position:fixed;top:0;left:0;right:0;bottom:0;background-image:var(--bg-image,none);background-size:cover;background-position:center;background-repeat:no-repeat;opacity:0.25;z-index:0;pointer-events:none}
 body::after{content:'';position:fixed;top:0;left:0;right:0;bottom:0;background:linear-gradient(to right,rgba(10,14,20,0.50) 0%,rgba(10,14,20,0.10) 14%,transparent 28%,transparent 72%,rgba(10,14,20,0.10) 86%,rgba(10,14,20,0.50) 100%);z-index:0;pointer-events:none}
-main,nav,footer{position:relative;z-index:1}
+main,footer{position:relative;z-index:1}
 .skin-switch-btn{flex-shrink:0;background:rgba(200,170,110,0.10);border:1px solid rgba(200,170,110,0.22);color:var(--gold);padding:6px 14px;border-radius:8px;cursor:pointer;font-size:12px;transition:all .2s;white-space:nowrap;user-select:none}
 .skin-switch-btn:hover{background:rgba(200,170,110,0.22);border-color:rgba(200,170,110,0.4)}
 .skin-switch-btn.loading{opacity:0.5;cursor:wait}
@@ -2703,15 +2726,6 @@ def _build_hero(results: dict) -> str:
             if lp > 0:
                 tier_label += f" · {lp}胜点"
             tier_badge = f'<span class="pb-tier">{tier_label}</span>'
-        # 赛季副标题
-        season_sub = ""
-        if season and season.get("total", 0) > 0:
-            parts = [f'赛季 <span>{season["total"]}场</span>']
-            if season.get("win_rate", 0) > 0:
-                parts.append(f'胜率 <span>{season["win_rate"]}%</span>')
-            if season.get("wins", 0) > 0:
-                parts.append(f'<span>{season["wins"]}胜{season.get("losses", 0)}负</span>')
-            season_sub = f'<div class="pb-sub">{" · ".join(parts)}</div>'
         # 组装横幅 — 招牌英雄图标
         champ_id = ov.get("most_played_champ", 0)
         champ_icon_url = f"https://wegame.gtimg.com/g.26-r.c2d3c/helper/lol/assis/images/resources/champions/{champ_id}.png" if champ_id else ""
@@ -2725,13 +2739,15 @@ def _build_hero(results: dict) -> str:
       <span class="pb-level">Lv.{lv}</span>
       {tier_badge}
     </div>
-    {season_sub}
   </div>
   <button class="skin-switch-btn loading" id="skinSwitchBtn" title="皮肤检测中…">🎨 背景换肤</button>
 </div>'''
 
     # ── 总体评价 ──
     rating_html = f'<div class="overall-rating">⭐ {rating}</div>' if rating else ""
+
+    # ── 生涯里程碑数据（提前获取，用于后续生涯里程碑区域）──
+    milestones_early = sa.get("milestones", {}) if sa.get("has_profile") or sa.get("has_career") else {}
 
     # ── 近期对局概览卡片 ──
     cards = [
@@ -2760,28 +2776,42 @@ def _build_hero(results: dict) -> str:
 
     # ── 生涯里程碑（第二行） ──
     extra_html = ""
-    milestones = sa.get("milestones", {}) if sa.get("has_profile") or sa.get("has_career") else {}
+    milestones = milestones_early
     records = sa.get("records", []) if sa.get("has_profile") else []
     if milestones or records:
         all_cards = []
+        # 从 records 中提取可单独排列的条目
+        rec_by_label = {r["label"]: r["value"] for r in records}
         if milestones:
-            more = [
+            ordered = [
+                # 生涯基础
                 ("生涯总场次", milestones.get("career_total_games", 0), ""),
                 ("生涯总击杀", f"{milestones.get('total_kills', 0):,}", ""),
                 ("生涯总助攻", f"{milestones.get('total_assists', 0):,}", ""),
-                ("生涯五杀", milestones.get("total_penta", 0), ""),
-                ("生涯MVP", milestones.get("total_mvps", 0), ""),
-                ("生涯最长连胜", f"{milestones.get('max_streak', 0)}局", ""),
                 ("生涯总插眼", f"{milestones.get('total_ward', 0):,}", ""),
-                ("受欢迎度", f"{milestones.get('praise_ratio', 0)}%",
-                 "win" if milestones.get("praise_ratio", 0) >= 50 else "loss"),
+                # 连胜与超神
+                ("生涯最长连胜", f"{milestones.get('max_streak', 0)}局", ""),
+                ("生涯总超神", rec_by_label.pop("生涯总超神", "0"), ""),
+                # 荣誉
+                ("生涯MVP", milestones.get("total_mvps", 0), ""),
+                ("生涯SVP", milestones.get("total_svps", 0), ""),
+                # 五杀
+                ("生涯五杀", milestones.get("total_penta", 0), ""),
             ]
-            r30 = sa.get("recent30", {})
-            if r30:
-                wr30 = r30.get("win_rate", 0)
-                more.append(("近30天胜率", f"{wr30}%", "win" if wr30 >= 50 else "loss"))
-            all_cards.extend(more)
-        if records:
+            all_cards.extend(ordered)
+            # 单局纪录
+            skip = {"生涯总超神", "生涯最长游戏时间"}
+            for rec in records:
+                if rec["label"] in skip:
+                    continue
+                all_cards.append((rec["label"], rec["value"], ""))
+            # 生涯最长游戏时间
+            if "生涯最长游戏时间" in rec_by_label:
+                all_cards.append(("生涯最长游戏时间", rec_by_label["生涯最长游戏时间"], ""))
+            # 受欢迎度
+            all_cards.append(("受欢迎度", f"{milestones.get('praise_ratio', 0)}%",
+                             "win" if milestones.get("praise_ratio", 0) >= 50 else "loss"))
+        elif records:
             for rec in records:
                 all_cards.append((rec["label"], rec["value"], ""))
         combined = "".join(
@@ -3824,7 +3854,7 @@ def generate_report(
         dated_output.write_text(html, encoding="utf-8")
         return str(dated_output.resolve())
 
-    overview = _analyze_overview(matches)
+    overview = _analyze_overview(matches, summoner_profile)
     results = {
         "overview": overview,
         "win_rate_by_day": _analyze_win_rate_by_day_of_week(matches),
