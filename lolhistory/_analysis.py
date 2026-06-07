@@ -362,7 +362,7 @@ def _analyze_overview(matches: list[dict]) -> dict:
     if svp_rate >= 15:
         metric_comments.append(f"SVP率达{svp_rate}%（{total_svps}次），实力在线但团队配合欠佳")
     # 最长连胜
-    if longest_win_streak >= 5:
+    if longest_win_streak >= 8:
         metric_comments.append(f"最长打出过{longest_win_streak}连胜，上分爆发力强")
     # 英雄池
     if hero_pool >= 5:
@@ -2359,6 +2359,40 @@ _SEASON_TIER_Y = {8: 8, 7: 7, 6: 6, 1: 5, 2: 4, 3: 3, 4: 2, 5: 1, 255: 0, 0: 0}
 _SEASON_TIER_LABELS = {8: "最强王者", 7: "傲世宗师", 6: "超凡大师",
                        5: "钻石", 4: "翡翠", 3: "铂金", 2: "黄金", 1: "白银", 0: "未定级"}
 
+def _analyze_season_stats(season_history: list[dict]) -> dict:
+    """从 season_history 表统计各赛季对局数量和胜率（单双排+组排合计）。"""
+    if not season_history:
+        return {"labels": [], "games": [], "win_rates": [], "summary": "暂无赛季历史数据。"}
+
+    labels = []
+    games_list = []
+    wr_list = []
+    for s in season_history:
+        sid = s.get("sid", 0)
+        if not sid:
+            continue
+        labels.append(f"S{sid}")
+        total = (s.get("total_games", 0) or 0) + (s.get("team_total", 0) or 0)
+        wins = (s.get("wins", 0) or 0) + (s.get("team_wins", 0) or 0)
+        games_list.append(total)
+        wr_list.append(round(wins / total * 100, 1) if total > 0 else 0)
+
+    if not labels:
+        return {"labels": [], "games": [], "win_rates": [], "summary": "暂无有效赛季数据。"}
+
+    overall_games = sum(games_list)
+    summary_parts = [f"共 {overall_games} 场覆盖 {len(labels)} 个赛季"]
+    if games_list and max(games_list) > 0:
+        max_idx = games_list.index(max(games_list))
+        summary_parts.append(f"最多场次赛季 {labels[max_idx]}（{max(games_list)}场）")
+
+    return {
+        "labels": labels,
+        "games": games_list,
+        "win_rates": wr_list,
+        "summary": " · ".join(summary_parts) + "。",
+    }
+
 
 def _analyze_season_tier_timeline(season_history: list[dict]) -> dict:
     """赛季段位演进：折线图展示单双排和组排段位跨赛季变化。"""
@@ -2575,7 +2609,7 @@ def _chart_json(data) -> str:
 def _build_css() -> str:
     return """
 :root{
---bg:#0a0e14;--bg2:#141b22;--card:#1a2230;--card-hover:#212b38;
+--bg:#0a0e14;--bg2:rgba(20,27,34,0.65);--card:#1a2230;--card-alpha:rgba(26,34,48,0.75);--card-hover:#212b38;
 --border:#2a3a4a;--text:#d4d8dd;--text2:#8b95a5;--text3:#5a6575;
 --gold:#c8aa6e;--blue:#0ac8b9;--green:#2ecc71;--red:#e74c3c;
 --blue2:#4a9eff;--purple:#a855f7;--orange:#f59e0b;
@@ -2589,19 +2623,29 @@ nav a{color:var(--text2);font-size:13px;padding:6px 12px;border-radius:6px;trans
 nav a:hover{color:var(--text);background:var(--card)}
 main{max-width:1280px;margin:0 auto;padding:24px 20px 60px}
 .hero{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:32px}
-.hero-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px 18px;text-align:center;transition:transform .2s}
+.hero-card{background:var(--card-alpha);backdrop-filter:blur(2px);border:1px solid var(--border);border-radius:10px;padding:16px 18px;text-align:center;transition:transform .2s}
 .hero-card:hover{transform:translateY(-2px)}
 .hero-card .value{font-size:28px;font-weight:700;color:var(--gold)}
 .hero-card .label{font-size:12px;color:var(--text2);margin-top:4px}
 .hero-card.win .value{color:var(--green)}
 .hero-card.loss .value{color:var(--red)}
+.player-banner{display:flex;align-items:center;gap:18px;background:linear-gradient(135deg,rgba(200,170,110,0.10),rgba(10,200,185,0.05),rgba(10,14,20,0.6));border:1px solid rgba(200,170,110,0.28);border-radius:14px;padding:20px 28px;margin-bottom:20px}
+.player-banner .pb-icon{flex-shrink:0}.player-banner .pb-icon img{width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid rgba(200,170,110,0.35);filter:drop-shadow(0 2px 10px rgba(200,170,110,0.25))}
+.player-banner .pb-info{flex:1;min-width:0}
+.player-banner .pb-main{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:4px}
+.player-banner .pb-name{font-size:26px;font-weight:700;color:var(--gold);letter-spacing:0.5px}
+.player-banner .pb-level{display:inline-block;background:rgba(200,170,110,0.12);color:var(--gold);border:1px solid rgba(200,170,110,0.22);border-radius:16px;padding:1px 12px;font-size:13px;font-weight:500;white-space:nowrap}
+.player-banner .pb-tier{display:inline-block;background:linear-gradient(135deg,rgba(74,158,255,0.18),rgba(168,85,247,0.12));border:1px solid rgba(74,158,255,0.28);border-radius:16px;padding:1px 14px;font-size:13px;font-weight:600;color:var(--blue2);white-space:nowrap}
+.player-banner .pb-sub{font-size:13px;color:var(--text2)}
+.player-banner .pb-sub span{color:var(--text);font-weight:500}
 .overall-rating{background:linear-gradient(135deg,rgba(200,170,110,0.15),rgba(10,200,185,0.08));border:1px solid var(--gold);border-radius:10px;padding:14px 20px;margin-bottom:16px;font-size:15px;color:var(--gold);text-align:center;font-weight:500}
+@media(max-width:640px){.player-banner .pb-name{font-size:20px}.player-banner .pb-icon img{width:40px;height:40px}}
 .section{margin-bottom:40px}
 .section-title{font-size:22px;font-weight:700;color:var(--gold);margin-bottom:8px;padding-bottom:8px;border-bottom:2px solid var(--border);display:flex;align-items:center;gap:10px}
 .section-subtitle{font-size:13px;color:var(--text2);margin-bottom:16px}
 .chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:20px}
 @media(max-width:768px){.chart-grid{grid-template-columns:1fr}}
-.chart-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;transition:border-color .2s}
+.chart-card{background:var(--card-alpha);backdrop-filter:blur(2px);border:1px solid var(--border);border-radius:10px;padding:20px;transition:border-color .2s}
 .chart-card:hover{border-color:var(--gold)}
 .chart-card h3{font-size:15px;font-weight:600;color:var(--text);margin-bottom:4px}
 .chart-card .chart-wrap{position:relative;width:100%;margin:12px 0}
@@ -2618,6 +2662,14 @@ footer span{color:var(--gold)}
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:var(--bg)}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+body{position:relative}
+body::before{content:'';position:fixed;top:0;left:0;right:0;bottom:0;background-image:var(--bg-image,none);background-size:cover;background-position:center;background-repeat:no-repeat;opacity:0.25;z-index:0;pointer-events:none}
+body::after{content:'';position:fixed;top:0;left:0;right:0;bottom:0;background:linear-gradient(to right,rgba(10,14,20,0.50) 0%,rgba(10,14,20,0.10) 14%,transparent 28%,transparent 72%,rgba(10,14,20,0.10) 86%,rgba(10,14,20,0.50) 100%);z-index:0;pointer-events:none}
+main,nav,footer{position:relative;z-index:1}
+.skin-switch-btn{flex-shrink:0;background:rgba(200,170,110,0.10);border:1px solid rgba(200,170,110,0.22);color:var(--gold);padding:6px 14px;border-radius:8px;cursor:pointer;font-size:12px;transition:all .2s;white-space:nowrap;user-select:none}
+.skin-switch-btn:hover{background:rgba(200,170,110,0.22);border-color:rgba(200,170,110,0.4)}
+.skin-switch-btn.loading{opacity:0.5;cursor:wait}
+@media(max-width:640px){.skin-switch-btn{padding:4px 10px;font-size:11px}}
 """
 
 def _build_nav() -> str:
@@ -2636,11 +2688,52 @@ def _build_hero(results: dict) -> str:
     ov = results.get("overview", {})
     sa = results.get("summoner_profile_analysis", {})
     rating = ov.get("overall_rating", "")
-    name_tag = ""
-    if sa.get("summoner_name"):
+
+    # ── 玩家名片横幅 ──
+    banner_html = ""
+    player_name = sa.get("summoner_name", "")
+    if player_name:
         lv = sa.get("level", 0)
-        name_tag = f'<span style="color:var(--text);font-weight:400">| {sa["summoner_name"]} <span style="color:var(--text2);font-weight:400">Lv.{lv}</span></span>'
-    rating_html = f'<div class="overall-rating">⭐ {rating} {name_tag}</div>' if rating else ""
+        # 段位徽章
+        tier_badge = ""
+        season = sa.get("season_info", {})
+        if season and season.get("tier_name") and season["tier_name"] != "未知":
+            tier_label = season["tier_name"]
+            lp = season.get("lp", 0)
+            if lp > 0:
+                tier_label += f" · {lp}胜点"
+            tier_badge = f'<span class="pb-tier">{tier_label}</span>'
+        # 赛季副标题
+        season_sub = ""
+        if season and season.get("total", 0) > 0:
+            parts = [f'赛季 <span>{season["total"]}场</span>']
+            if season.get("win_rate", 0) > 0:
+                parts.append(f'胜率 <span>{season["win_rate"]}%</span>')
+            if season.get("wins", 0) > 0:
+                parts.append(f'<span>{season["wins"]}胜{season.get("losses", 0)}负</span>')
+            season_sub = f'<div class="pb-sub">{" · ".join(parts)}</div>'
+        # 组装横幅 — 招牌英雄图标
+        champ_id = ov.get("most_played_champ", 0)
+        champ_icon_url = f"https://wegame.gtimg.com/g.26-r.c2d3c/helper/lol/assis/images/resources/champions/{champ_id}.png" if champ_id else ""
+        champ_name = ov.get("most_played_champ_name", "")
+        icon_html = f'<img src="{champ_icon_url}" alt="{champ_name}" title="{champ_name}" onerror="this.parentElement.innerHTML=\'⚔️\'">' if champ_icon_url else "⚔️"
+        banner_html = f'''<div class="player-banner">
+  <div class="pb-icon">{icon_html}</div>
+  <div class="pb-info">
+    <div class="pb-main">
+      <span class="pb-name">{player_name}</span>
+      <span class="pb-level">Lv.{lv}</span>
+      {tier_badge}
+    </div>
+    {season_sub}
+  </div>
+  <button class="skin-switch-btn loading" id="skinSwitchBtn" title="皮肤检测中…">🎨 背景换肤</button>
+</div>'''
+
+    # ── 总体评价 ──
+    rating_html = f'<div class="overall-rating">⭐ {rating}</div>' if rating else ""
+
+    # ── 近期对局概览卡片 ──
     cards = [
         ("总场次", ov.get("total_games", 0), ""),
         ("胜率", f"{ov.get('win_rate', 0)}%", "win" if ov.get("win_rate", 0) >= 50 else "loss"),
@@ -2664,13 +2757,13 @@ def _build_hero(results: dict) -> str:
     html_cards = ""
     for label, value, cls in cards:
         html_cards += f'<div class="hero-card {cls}"><div class="value">{value}</div><div class="label">{label}</div></div>'
-    # 生涯里程碑（第二行）
+
+    # ── 生涯里程碑（第二行） ──
     extra_html = ""
     milestones = sa.get("milestones", {}) if sa.get("has_profile") or sa.get("has_career") else {}
     records = sa.get("records", []) if sa.get("has_profile") else []
     if milestones or records:
         all_cards = []
-        # 生涯累计
         if milestones:
             more = [
                 ("生涯总场次", milestones.get("career_total_games", 0), ""),
@@ -2688,7 +2781,6 @@ def _build_hero(results: dict) -> str:
                 wr30 = r30.get("win_rate", 0)
                 more.append(("近30天胜率", f"{wr30}%", "win" if wr30 >= 50 else "loss"))
             all_cards.extend(more)
-        # 个人单局纪录
         if records:
             for rec in records:
                 all_cards.append((rec["label"], rec["value"], ""))
@@ -2700,7 +2792,7 @@ def _build_hero(results: dict) -> str:
 
     overview_html = f'<div class="section-subtitle" style="margin-top:16px">📊 近期对局概览</div><div class="hero">{html_cards}</div>'
 
-    return f'<section id="overview">{rating_html}{extra_html}{overview_html}</section>'
+    return f'<section id="overview">{banner_html}{rating_html}{extra_html}{overview_html}</section>'
 
 def _chart_card(title: str, chart_id: str, summary: str, full_width: bool = False) -> str:
     cls = "chart-card full" if full_width else "chart-card"
@@ -2806,7 +2898,7 @@ def _build_section_player_level(r: dict) -> str:
 
     # ── 英雄池与个人能力 ──
     cards.append(_chart_card("📚 英雄池分布", "chart-pool", pool.get("summary", ""), True))
-    cards.append(_chart_card("🎯 拿手英雄雷达", "chart-radar", radar.get("summary", ""), True))
+    cards.append(_chart_card("🎯 招牌英雄雷达", "chart-radar", radar.get("summary", ""), True))
     cards.append(_chart_card("⚔️ 多杀含金量", "chart-multikill", mk.get("summary", "")))
     cards.append(_chart_card("🎭 Carry依赖度画像", "chart-carry-profile", cp.get("summary", "")))
     cards.append(_chart_card("💰 经济效率分析", "chart-gpm", gold.get("summary", ""), True))
@@ -2857,7 +2949,10 @@ def _build_section_attendance(r: dict) -> str:
         loss_days = sum(1 for d in lp_days if d["lp_change"] < 0)
         lp_summary = f"{len(lp_days)} 天有LP变化：{gain_days} 天上涨，{loss_days} 天下跌。绿色柱=上分日，红色柱=掉分日。"
 
+    season_stats = r.get("season_stats", {})
     cards = []
+    # ── 各赛季对局数量与胜率（全宽） ──
+    cards.append(_chart_card("🏆 各赛季对局数量与胜率", "chart-season-stats", season_stats.get("summary", ""), True))
     if key_cards_html:
         cards.append(f'<div class="chart-card full"><h3>🗓️ 关键日期</h3><p style="color:#8b95a5;font-size:12px;margin-bottom:8px">（仅统计 ≥3 场的日期）</p><div class="hero">{key_cards_html}</div></div>')
 
@@ -3103,6 +3198,27 @@ def _build_all_charts(r: dict) -> str:
   options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2.5,
     plugins:{{legend:{{display:false}}}},
     scales:{{y:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}},title:{{display:true,text:'综合LP',color:'#8b95a5'}}}},x:{{ticks:{{color:'#8b95a5',maxTicksLimit:30}},grid:{{color:'#2a3a4a'}}}}}}
+  }}
+}});""")
+
+    # 各赛季对局数量与胜率（出勤日历最前）
+    ss = r.get("season_stats", {})
+    if ss.get("labels"):
+        parts.append(f"""new Chart(document.getElementById('chart-season-stats'),{{
+  type:'bar',
+  data:{{labels:{_chart_json(ss.get('labels',[]))},
+    datasets:[
+      {{label:'对局数量',data:{_chart_json(ss.get('games',[]))},backgroundColor:'rgba(74,158,255,0.6)',borderColor:'#4a9eff',borderWidth:1,yAxisID:'y',order:2}},
+      {{label:'胜率 %',data:{_chart_json(ss.get('win_rates',[]))},borderColor:'#f59e0b',backgroundColor:'rgba(245,158,11,0.08)',borderWidth:2.5,pointRadius:5,pointBackgroundColor:'#f59e0b',pointBorderColor:'#f59e0b',yAxisID:'y1',type:'line',tension:0.3,fill:false,order:1}}
+    ]
+  }},
+  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2.5,
+    plugins:{{legend:{{labels:{{color:'#8b95a5',usePointStyle:true}}}}}},
+    scales:{{
+      y:{{type:'linear',position:'left',title:{{display:true,text:'场次',color:'#8b95a5'}},ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}},beginAtZero:true}},
+      y1:{{type:'linear',position:'right',title:{{display:true,text:'胜率 %',color:'#8b95a5'}},ticks:{{color:'#8b95a5'}},grid:{{display:false}},min:0,max:100}},
+      x:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}}
+    }}
   }}
 }});""")
 
@@ -3550,6 +3666,8 @@ def _build_all_charts(r: dict) -> str:
 
 def _build_html(results: dict) -> str:
     ov = results.get("overview", {})
+    champion_id = ov.get("most_played_champ", 0)
+    hero_name = ov.get("most_played_champ_name", "")
     export_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     css = _build_css()
     nav = _build_nav()
@@ -3563,6 +3681,7 @@ def _build_html(results: dict) -> str:
     ])
     charts_js = _build_all_charts(results)
     footer = _build_footer(ov.get("total_games", 0), export_time)
+    initial_skin_url = f"https://wegame.gtimg.com/g.26-r.c2d3c/helper/lol/assis/images/resources/skins/original/{champion_id}-001.jpg" if champion_id else ""
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -3571,7 +3690,7 @@ def _build_html(results: dict) -> str:
 <title>LOL 对局历史数据分析报告</title>
 <style>{css}</style>
 </head>
-<body>
+<body style="--bg-image: url('{initial_skin_url}');">
 {nav}
 <main>
 {hero}
@@ -3600,6 +3719,56 @@ def _build_html(results: dict) -> str:
   }}
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){{tryCDN(0);}});
   else tryCDN(0);
+  // 招牌英雄皮肤背景管理
+  var _skinCid={champion_id};
+  var _skinPool=[];
+  var _skinReady=false;
+  var _curSid='001';
+  var _heroName='{hero_name}';
+  function _setBg(sid){{
+    _curSid=sid;
+    document.body.style.setProperty('--bg-image','url(https://wegame.gtimg.com/g.26-r.c2d3c/helper/lol/assis/images/resources/skins/original/'+_skinCid+'-'+sid+'.jpg)');
+  }}
+  function _updateTooltip(){{
+    if(_skinBtn)_skinBtn.title='你的招牌英雄'+_heroName+'有'+_skinPool.length+'个皮肤';
+  }}
+  var _skinBtn=document.getElementById('skinSwitchBtn');
+  if(_skinBtn){{
+    _skinBtn.addEventListener('click',function(){{
+      if(!_skinReady){{alert('皮肤资源检测中，请稍等…');return;}}
+      if(_skinPool.length<=1)return;
+      var idx=_skinPool.indexOf(_curSid);
+      idx=(idx+1)%_skinPool.length;
+      _setBg(_skinPool[idx]);
+    }});
+  }}
+  function _detectSkins(){{
+    if(!_skinCid)return;
+    var total=21,done=0;
+    function ck(sid,ok){{
+      if(ok)_skinPool.push(sid);
+      done++;
+      if(done>=total){{
+        _skinReady=true;
+        if(_skinBtn){{
+          _skinBtn.classList.remove('loading');
+          _updateTooltip();
+        }}
+        if(_skinPool.indexOf('001')===-1&&_skinPool.indexOf('000')!==-1)_setBg('000');
+        else if(_skinPool.length===0)document.body.style.setProperty('--bg-image','none');
+      }}
+    }}
+    for(var i=0;i<=20;i++){{
+      (function(sid){{
+        var img=new Image();
+        img.onload=function(){{ck(sid,true);}};
+        img.onerror=function(){{ck(sid,false);}};
+        img.src='https://wegame.gtimg.com/g.26-r.c2d3c/helper/lol/assis/images/resources/skins/original/'+_skinCid+'-'+sid+'.jpg';
+      }})(('00'+i).slice(-3));
+    }}
+  }}
+  if(document.readyState==='complete')_detectSkins();
+  else window.addEventListener('load',_detectSkins);
 }})();
 </script>
 </body>
@@ -3686,6 +3855,7 @@ def generate_report(
         "prime_time_matrix": _analyze_prime_time_matrix(matches),
         # 赛季历史
         "season_tier_timeline": _analyze_season_tier_timeline(season_history),
+        "season_stats": _analyze_season_stats(season_history),
         # 生涯全景
         "summoner_profile_analysis": _analyze_summoner_profile(
             summoner_profile, career_overview, overview,
