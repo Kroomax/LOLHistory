@@ -12,7 +12,7 @@ from datetime import datetime
 from collections import defaultdict, Counter
 from pathlib import Path
 
-from ._data import CHAMPION_DISPLAY
+from ._data import CHAMPION_DISPLAY, WEGAME_TIER_NAMES
 
 # ── 常量 ────────────────────────────────────────────────────────────────────
 
@@ -183,6 +183,71 @@ def _load_champion_mastery(db_path: str) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def _load_season_history(db_path: str) -> list[dict]:
+    """从 SQLite 加载 season_history 表数据，按赛季ID升序。"""
+    if not Path(db_path).exists():
+        return []
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    try:
+        cur.execute("SELECT COUNT(*) FROM season_history")
+        if cur.fetchone()[0] == 0:
+            return []
+    except sqlite3.OperationalError:
+        return []
+
+    cur.execute("SELECT * FROM season_history ORDER BY sid ASC")
+    rows = cur.fetchall()
+    conn.close()
+
+    return [dict(row) for row in rows]
+
+
+def _load_summoner_profile(db_path: str) -> dict | None:
+    """从 SQLite 加载 summoner_profile 表数据（单行）。"""
+    if not Path(db_path).exists():
+        return None
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT COUNT(*) FROM summoner_profile")
+        if cur.fetchone()[0] == 0:
+            conn.close()
+            return None
+    except sqlite3.OperationalError:
+        conn.close()
+        return None
+    cur.execute("SELECT * FROM summoner_profile LIMIT 1")
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def _load_career_overview(db_path: str) -> dict | None:
+    """从 SQLite 加载 career_overview 表数据（单行）。"""
+    if not Path(db_path).exists():
+        return None
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT COUNT(*) FROM career_overview")
+        if cur.fetchone()[0] == 0:
+            conn.close()
+            return None
+    except sqlite3.OperationalError:
+        conn.close()
+        return None
+    cur.execute("SELECT * FROM career_overview LIMIT 1")
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 def _filter_ranked(matches: list[dict]) -> list[dict]:
     """仅保留排位单双排 (queue_id=420)。"""
     return [m for m in matches if m.get("game_queue_id") == 420]
@@ -260,9 +325,9 @@ def _analyze_overview(matches: list[dict]) -> dict:
     # 英雄池：胜场至少为10的英雄的数量
     champ_win_counts = Counter(m["champion_id"] for m in matches if m["win"])
     hero_pool = sum(1 for cnt in champ_win_counts.values() if cnt >= 10)
-    # 位置灵活度：仅计召唤师峡谷中胜场≥10的位置
+    # 位置灵活度：仅计召唤师峡谷中胜场≥20的位置
     pos_win_counts = Counter(m["position"] for m in matches if m["win"] and m.get("map_id") == 11)
-    unique_positions = sum(1 for cnt in pos_win_counts.values() if cnt >= 10)
+    unique_positions = sum(1 for cnt in pos_win_counts.values() if cnt >= 20)
 
     # 最长连胜
     longest_win_streak = 0
@@ -313,7 +378,7 @@ def _analyze_overview(matches: list[dict]) -> dict:
     # 四杀
     if total_quadra >= 3:
         metric_comments.append(f"{total_quadra}次四杀，离五杀只差临门一脚")
-    # 位置灵活度（仅计胜场≥10的位置）
+    # 位置灵活度（仅计胜场≥20的位置）
     if unique_positions >= 3:
         metric_comments.append(f"横跨{unique_positions}个位置，阵容适配力极强")
     # 场均击杀
@@ -2285,6 +2350,223 @@ def _analyze_prime_time_matrix(matches: list[dict]) -> dict:
                    (f"。共 {len(cells)} 个有效时段（≥3场）" if cells else "。注意：空白单元格表示数据不足（<3场）。"),
     }
 
+
+# ── 赛季历史分析 ──────────────────────────────────────────────────────────────
+
+# WeGame 段位编号 → Y 轴数值（越高段位越高，用于图表展示）
+_SEASON_TIER_Y = {8: 8, 7: 7, 6: 6, 1: 5, 2: 4, 3: 3, 4: 2, 5: 1, 255: 0, 0: 0}
+# Y 轴数值 → 中文段位名
+_SEASON_TIER_LABELS = {8: "最强王者", 7: "傲世宗师", 6: "超凡大师",
+                       5: "钻石", 4: "翡翠", 3: "铂金", 2: "黄金", 1: "白银", 0: "未定级"}
+
+
+def _analyze_season_tier_timeline(season_history: list[dict]) -> dict:
+    """赛季段位演进：折线图展示单双排和组排段位跨赛季变化。"""
+    if not season_history:
+        return {"labels": [], "solo_tiers": [], "flex_tiers": [],
+                "summary": "暂无赛季历史数据。"}
+
+    # 过滤有排位数据的赛季（单双排或组排至少一个有数据）
+    active = [s for s in season_history
+              if (s.get("total_games") or 0) > 0 or (s.get("team_total") or 0) > 0]
+    if not active:
+        return {"labels": [], "solo_tiers": [], "flex_tiers": [],
+                "summary": "暂无赛季段位数据。"}
+
+    labels = [f"S{s['sid']}" for s in active]
+    solo_tiers = [_SEASON_TIER_Y.get(s.get("tier", 255), 0) for s in active]
+    flex_tiers = [_SEASON_TIER_Y.get(s.get("team_tier", 255), 0) for s in active]
+
+    # 生成摘要
+    solo_peaks = [(i, v) for i, v in enumerate(solo_tiers) if v > 0]
+    if solo_peaks:
+        peak_idx, peak_val = max(solo_peaks, key=lambda x: x[1])
+        peak_label = _SEASON_TIER_LABELS.get(peak_val, "")
+        peak_season = labels[peak_idx]
+        current_tier = _SEASON_TIER_LABELS.get(solo_tiers[-1], "") if solo_tiers else ""
+        summary = f"共 {len(active)} 个赛季，最高段位 {peak_label}（{peak_season}），当前 {current_tier}。"
+    else:
+        summary = f"共 {len(active)} 个赛季，暂无段位记录。"
+
+    if len(active) == 1:
+        summary += " 仅有1个赛季数据，趋势分析需多个赛季。"
+
+    return {"labels": labels, "solo_tiers": solo_tiers, "flex_tiers": flex_tiers,
+            "summary": summary}
+
+
+# ── 生涯全景分析（summoner_profile + career_overview） ─────────────────────
+
+def _analyze_summoner_profile(
+    profile: dict | None,
+    career: dict | None,
+    overview: dict,
+) -> dict:
+    """整合 summoner_profile 和 career_overview，生成生涯全景分析。"""
+    result = {
+        "has_profile": profile is not None,
+        "has_career": career is not None,
+    }
+    if not profile and not career:
+        return result
+
+    # 召唤师基本信息
+    if profile:
+        result["summoner_name"] = profile.get("summoner_name", "")
+        result["level"] = profile.get("level", 0)
+
+    # 1. 生涯里程碑
+    result["milestones"] = _calc_career_milestones(profile, career, overview)
+
+    # 2. 全模式分布
+    if career:
+        result["mode_distribution"] = _calc_mode_distribution(career)
+
+    # 3. 生涯纪录榜
+    if profile:
+        result["records"] = _calc_records_board(profile)
+
+    # 4. 近30天状态
+    if profile:
+        result["recent30"] = _calc_recent30_status(profile)
+
+    # 5. 当前赛季
+    if profile:
+        result["season_info"] = _calc_season_info(profile)
+
+    return result
+
+
+def _calc_career_milestones(profile, career, overview):
+    """对比生涯总计 vs 已下载数据。"""
+    m = {}
+    if career:
+        m["career_total_games"] = career.get("total_all_games", 0) or 0
+    m["analyzed_games"] = overview.get("total_games", 0) or 0
+
+    if profile:
+        m["total_kills"] = profile.get("total_kills", 0) or 0
+        m["total_assists"] = profile.get("total_assists", 0) or 0
+        m["total_penta"] = profile.get("total_penta_kills", 0) or 0
+        m["total_mvps"] = profile.get("total_mvp_times", 0) or 0
+        m["total_svps"] = profile.get("total_svp_times", 0) or 0
+        m["max_streak"] = profile.get("max_consecutive_wins", 0) or 0
+        m["total_ward"] = profile.get("total_ward_placed", 0) or 0
+        m["level"] = profile.get("level", 0) or 0
+        praise = profile.get("praise", 0) or 0
+        discredit = profile.get("discredit", 0) or 0
+        total_fb = praise + discredit
+        m["praise_ratio"] = round(praise / total_fb * 100, 1) if total_fb > 0 else 0
+
+    if career:
+        total = m.get("career_total_games", 0)
+        analyzed = m.get("analyzed_games", 0)
+        m["coverage_pct"] = round(analyzed / total * 100, 1) if total > 0 else 0
+    return m
+
+
+def _calc_mode_distribution(career):
+    """计算全模式生涯分布。"""
+    modes = [
+        ("排位", career.get("total_rank_games", 0), career.get("total_rank_wins", 0)),
+        ("大乱斗", career.get("total_aram_games", 0), career.get("total_aram_wins", 0)),
+        ("匹配", career.get("total_match_games", 0), career.get("total_match_wins", 0)),
+        ("组排", career.get("total_teamrank_games", 0), career.get("total_teamrank_wins", 0)),
+        ("人机", career.get("total_ai_games", 0), career.get("total_ai_wins", 0)),
+        ("Clash", career.get("total_clash_games", 0), 0),
+    ]
+    filtered = []
+    for name, games, wins in modes:
+        if games > 0:
+            wr = _win_rate(wins or 0, games) if wins is not None else None
+            filtered.append({"name": name, "games": games, "wins": wins or 0, "win_rate": wr})
+
+    filtered.sort(key=lambda x: x["games"], reverse=True)
+    total_g = sum(m["games"] for m in filtered)
+    for m in filtered:
+        m["pct"] = round(m["games"] / total_g * 100, 1) if total_g > 0 else 0
+
+    if not filtered:
+        return {"modes": [], "total_games": 0, "summary": "", "wr_summary": ""}
+
+    summary = f"生涯共 {total_g} 场，{filtered[0]['name']} {filtered[0]['games']} 场最多（{filtered[0]['pct']}%）。"
+    wr_list = [f"{m['name']} {m['win_rate']}%" for m in filtered if m['win_rate'] is not None]
+    wr_summary = "各模式胜率：" + "、".join(wr_list) if wr_list else ""
+    return {"modes": filtered, "total_games": total_g, "summary": summary, "wr_summary": wr_summary}
+
+
+def _calc_records_board(profile):
+    """生涯单局纪录榜。"""
+    pairs = [
+        ("单局最高击杀", "most_kills_num", ""),
+        ("单局最高助攻", "most_assists_num", ""),
+        ("单局最高伤害", "most_damage_num", "num"),
+        ("单局最高承伤", "most_damage_taken_num", "num"),
+        ("单局最高经济", "most_gold_earned_num", "num"),
+        ("单局最高补刀", "most_minions_kill_num", ""),
+        ("单局最多推塔", "most_turrets_kill_num", ""),
+        ("单局最高评分", "highest_game_score", ""),
+        ("超神次数", "total_god_likes", ""),
+    ]
+    records = []
+    for label, key, fmt in pairs:
+        val = profile.get(key)
+        if val is not None:
+            if fmt == "num":
+                display = f"{val:,}" if val >= 1000 else str(val)
+            else:
+                display = str(val)
+            records.append({"label": label, "value": display})
+    return records
+
+
+def _calc_recent30_status(profile):
+    """近30天状态。"""
+    r = {}
+    kills = profile.get("kill_30days", 0) or 0
+    deaths = profile.get("death_30days", 0) or 0
+    assists = profile.get("assist_30days", 0) or 0
+    wins = profile.get("recent_win_times", 0) or 0
+    games = profile.get("recent_play_times", 0) or 0
+
+    r["kills"] = kills
+    r["deaths"] = deaths
+    r["assists"] = assists
+    r["kda"] = round((kills + assists) / max(deaths, 1), 2)
+    r["wins"] = wins
+    r["games"] = games
+    r["win_rate"] = _win_rate(wins, games)
+    r["kda_score"] = profile.get("recent_kda_score", 0) or 0
+
+    # 解析常用英雄 JSON
+    champs_raw = profile.get("common_champions")
+    if champs_raw:
+        try:
+            champs = json.loads(champs_raw) if isinstance(champs_raw, str) else champs_raw
+            r["common_champions"] = list(champs)[:5] if isinstance(champs, list) else []
+        except (json.JSONDecodeError, TypeError):
+            r["common_champions"] = []
+    return r
+
+
+def _calc_season_info(profile):
+    """当前赛季信息。"""
+    s = {}
+    s["total"] = profile.get("season_total", 0) or 0
+    s["wins"] = profile.get("season_wins", 0) or 0
+    s["losses"] = profile.get("season_losses", 0) or 0
+    s["win_rate"] = _win_rate(s["wins"], s["total"])
+    s["tier"] = profile.get("season_tier")
+    s["lp"] = profile.get("season_win_point", 0) or 0
+    # 映射段位中文名
+    tier_val = s["tier"]
+    if isinstance(tier_val, int) and tier_val in WEGAME_TIER_NAMES:
+        s["tier_name"] = WEGAME_TIER_NAMES[tier_val]
+    else:
+        s["tier_name"] = "未知"
+    return s
+
+
 # ── HTML 生成 ────────────────────────────────────────────────────────────────
 
 def _chart_json(data) -> str:
@@ -2350,9 +2632,15 @@ def _build_nav() -> str:
     links = "".join(f'<a href="{href}">{label}</a>' for href, label in items)
     return f'<nav><span class="logo">⚔️ LOLhistory</span>{links}</nav>'
 
-def _build_hero(ov: dict) -> str:
+def _build_hero(results: dict) -> str:
+    ov = results.get("overview", {})
+    sa = results.get("summoner_profile_analysis", {})
     rating = ov.get("overall_rating", "")
-    rating_html = f'<div class="overall-rating">{rating}</div>' if rating else ""
+    name_tag = ""
+    if sa.get("summoner_name"):
+        lv = sa.get("level", 0)
+        name_tag = f'<span style="color:var(--text);font-weight:400">| {sa["summoner_name"]} <span style="color:var(--text2);font-weight:400">Lv.{lv}</span></span>'
+    rating_html = f'<div class="overall-rating">⭐ {rating} {name_tag}</div>' if rating else ""
     cards = [
         ("总场次", ov.get("total_games", 0), ""),
         ("胜率", f"{ov.get('win_rate', 0)}%", "win" if ov.get("win_rate", 0) >= 50 else "loss"),
@@ -2376,7 +2664,43 @@ def _build_hero(ov: dict) -> str:
     html_cards = ""
     for label, value, cls in cards:
         html_cards += f'<div class="hero-card {cls}"><div class="value">{value}</div><div class="label">{label}</div></div>'
-    return f'<section id="overview">{rating_html}<div class="hero">{html_cards}</div></section>'
+    # 生涯里程碑（第二行）
+    extra_html = ""
+    milestones = sa.get("milestones", {}) if sa.get("has_profile") or sa.get("has_career") else {}
+    records = sa.get("records", []) if sa.get("has_profile") else []
+    if milestones or records:
+        all_cards = []
+        # 生涯累计
+        if milestones:
+            more = [
+                ("生涯总场次", milestones.get("career_total_games", 0), ""),
+                ("生涯总击杀", f"{milestones.get('total_kills', 0):,}", ""),
+                ("生涯总助攻", f"{milestones.get('total_assists', 0):,}", ""),
+                ("生涯五杀", milestones.get("total_penta", 0), ""),
+                ("生涯MVP", milestones.get("total_mvps", 0), ""),
+                ("生涯最长连胜", f"{milestones.get('max_streak', 0)}局", ""),
+                ("生涯总插眼", f"{milestones.get('total_ward', 0):,}", ""),
+                ("受欢迎度", f"{milestones.get('praise_ratio', 0)}%",
+                 "win" if milestones.get("praise_ratio", 0) >= 50 else "loss"),
+            ]
+            r30 = sa.get("recent30", {})
+            if r30:
+                wr30 = r30.get("win_rate", 0)
+                more.append(("近30天胜率", f"{wr30}%", "win" if wr30 >= 50 else "loss"))
+            all_cards.extend(more)
+        # 个人单局纪录
+        if records:
+            for rec in records:
+                all_cards.append((rec["label"], rec["value"], ""))
+        combined = "".join(
+            f'<div class="hero-card {cls}"><div class="value">{v}</div><div class="label">{l}</div></div>'
+            for l, v, cls in all_cards
+        )
+        extra_html = f'<div class="section-subtitle" style="margin-top:20px">🏆 生涯里程碑</div><div class="hero">{combined}</div>'
+
+    overview_html = f'<div class="section-subtitle" style="margin-top:16px">📊 近期对局概览</div><div class="hero">{html_cards}</div>'
+
+    return f'<section id="overview">{rating_html}{extra_html}{overview_html}</section>'
 
 def _chart_card(title: str, chart_id: str, summary: str, full_width: bool = False) -> str:
     cls = "chart-card full" if full_width else "chart-card"
@@ -2461,32 +2785,34 @@ def _build_section_psychology(r: dict) -> str:
     ]
     return f'<section id="psychology" class="section"><div class="section-title">🧠 游戏心理</div><div class="section-subtitle">心态波动、情绪韧性与行为模式深度剖析</div><div class="chart-grid">{"".join(cards)}</div></section>'
 
+
 def _build_section_player_level(r: dict) -> str:
     """玩家水平 — 报告第5章。"""
     pool = r.get("champion_pool", {})
     radar = r.get("champion_radar", {})
-    lp = r.get("lp_efficiency", {})
     mk = r.get("multi_kill_impact", {})
     cp = r.get("carry_profile", {})
     gold = r.get("gold_efficiency", {})
+    season_tier = r.get("season_tier_timeline", {})
+    sa = r.get("summoner_profile_analysis", {})
+    mode_dist = sa.get("mode_distribution", {}) if sa.get("has_career") else {}
 
-    # LP效率卡片（含英雄柱状图）
-    lp_card = f"""<div class="chart-card">
-    <h3>📈 LP爬分效率</h3>
-    <div class="chart-wrap"><canvas id="chart-lp-by-champ"></canvas></div>
-    <p class="summary">{lp.get('summary', '')}</p>
-    </div>"""
+    cards = []
+    # ── 生涯全景：赛季段位演进 + 全模式分布 — 放在最前面 ──
+    cards.append(_chart_card("📈 赛季段位演进", "chart-season-tier-timeline", season_tier.get("summary", ""), True))
+    if mode_dist.get("modes"):
+        cards.append(_chart_card("📊 全模式生涯分布", "chart-career-mode-dist", mode_dist.get("summary", "")))
+        cards.append(_chart_card("🎯 各模式胜率对比", "chart-career-mode-wr", mode_dist.get("wr_summary", "")))
 
-    cards = [
-        _chart_card("📚 英雄池分布", "chart-pool", pool.get("summary", ""), True),
-        _chart_card("🎯 拿手英雄雷达", "chart-radar", radar.get("summary", ""), True),
-        lp_card,
-        _chart_card("⚔️ 多杀含金量", "chart-multikill", mk.get("summary", "")),
-        _chart_card("🎭 Carry依赖度画像", "chart-carry-profile", cp.get("summary", ""), True),
-        _chart_card("💰 经济效率分析", "chart-gpm", gold.get("summary", ""), True),
-    ]
+    # ── 英雄池与个人能力 ──
+    cards.append(_chart_card("📚 英雄池分布", "chart-pool", pool.get("summary", ""), True))
+    cards.append(_chart_card("🎯 拿手英雄雷达", "chart-radar", radar.get("summary", ""), True))
+    cards.append(_chart_card("⚔️ 多杀含金量", "chart-multikill", mk.get("summary", "")))
+    cards.append(_chart_card("🎭 Carry依赖度画像", "chart-carry-profile", cp.get("summary", "")))
+    cards.append(_chart_card("💰 经济效率分析", "chart-gpm", gold.get("summary", ""), True))
+
     cards_html = "".join(c for c in cards if c)
-    return f'<section id="player-level" class="section"><div class="section-title">📈 玩家水平</div><div class="section-subtitle">英雄池深度、个人能力画像与经济转化效率</div><div class="chart-grid">{cards_html}</div></section>'
+    return f'<section id="player-level" class="section"><div class="section-title">📈 玩家水平</div><div class="section-subtitle">段位演进、生涯全景、英雄池深度与个人能力画像</div><div class="chart-grid">{cards_html}</div></section>'
 
 def _build_section_attendance(r: dict) -> str:
     """出勤日历 — 报告第6章。"""
@@ -3070,22 +3396,6 @@ def _build_all_charts(r: dict) -> str:
   }}
 }});""")
 
-    # LP效率柱状图（按英雄）
-    lp = r.get("lp_efficiency", {})
-    by_champ = lp.get("by_champ", [])
-    lp_champ_names = [c["name"] for c in by_champ]
-    lp_champ_vals = [c["lp_per_hr"] for c in by_champ]
-    lp_colors = ["rgba(46,204,113,0.7)" if v > 0 else "rgba(231,76,60,0.7)" for v in lp_champ_vals]
-    parts.append(f"""new Chart(document.getElementById('chart-lp-by-champ'),{{
-  type:'bar',
-  data:{{labels:{_chart_json(lp_champ_names)},
-    datasets:[{{label:'LP/小时',data:{_chart_json(lp_champ_vals)},backgroundColor:{_chart_json(lp_colors)},borderWidth:1}}]
-  }},
-  options:{{indexAxis:'y',responsive:true,maintainAspectRatio:true,aspectRatio:2,
-    plugins:{{legend:{{display:false}}}},
-    scales:{{x:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}},title:{{display:true,text:'LP/小时',color:'#8b95a5'}}}},y:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}}}}
-  }}
-}});""")
 
     # 时间热力图（纯JS渲染 — 胜率，12列每列2小时）
     pt = r.get("prime_time_matrix", {})
@@ -3169,6 +3479,68 @@ def _build_all_charts(r: dict) -> str:
   }})();
 }})();""")
 
+    # 赛季段位演进
+    stt = r.get("season_tier_timeline", {})
+    if stt.get("labels"):
+        tier_labels_map = _chart_json(_SEASON_TIER_LABELS)
+        parts.append(f"""new Chart(document.getElementById('chart-season-tier-timeline'),{{
+  type:'line',
+  data:{{labels:{_chart_json(stt.get('labels',[]))},
+    datasets:[
+      {{label:'单双排段位',data:{_chart_json(stt.get('solo_tiers',[]))},borderColor:'#c8aa6e',backgroundColor:'rgba(200,170,110,0.08)',fill:true,stepped:true,pointRadius:5,pointBackgroundColor:'#c8aa6e',pointBorderColor:'#c8aa6e',borderWidth:2}},
+      {{label:'组排段位',data:{_chart_json(stt.get('flex_tiers',[]))},borderColor:'#a855f7',backgroundColor:'rgba(168,85,247,0.05)',fill:true,stepped:true,pointRadius:5,pointBackgroundColor:'#a855f7',pointBorderColor:'#a855f7',borderWidth:2,borderDash:[6,3]}}
+    ]
+  }},
+  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2.5,
+    plugins:{{legend:{{labels:{{color:'#8b95a5',usePointStyle:true,padding:20}}}}}},
+    scales:{{
+      y:{{min:0,max:8,
+        ticks:{{color:'#8b95a5',stepSize:1,
+          callback:function(v){{var m={tier_labels_map};return m[v]||'';}}
+        }},
+        grid:{{color:'#2a3a4a'}},
+        title:{{display:true,text:'段位',color:'#8b95a5'}}
+      }},
+      x:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}},
+        title:{{display:true,text:'赛季',color:'#8b95a5'}}
+      }}
+    }}
+  }}
+}});""")
+
+    # ── 生涯全景图表 ──────────────────────────────────────────────────────────
+    sa = r.get("summoner_profile_analysis", {})
+    md = sa.get("mode_distribution", {}) if sa.get("has_career") else {}
+    modes = md.get("modes", [])
+    if modes:
+        # 全模式生涯分布（环形图）
+        mode_labels = _chart_json([m["name"] for m in modes])
+        mode_data = _chart_json([m["games"] for m in modes])
+        mode_colors = _chart_json([
+            "rgba(74,158,255,0.8)", "rgba(46,204,113,0.8)", "rgba(245,158,11,0.8)",
+            "rgba(168,85,247,0.8)", "rgba(149,165,166,0.8)", "rgba(236,72,153,0.8)",
+        ][:len(modes)])
+        parts.append(f"""new Chart(document.getElementById('chart-career-mode-dist'),{{
+  type:'doughnut',
+  data:{{labels:{mode_labels},datasets:[{{data:{mode_data},backgroundColor:{mode_colors},borderWidth:1}}]}},
+  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:1.8,
+    plugins:{{legend:{{labels:{{color:'#8b95a5'}}}}}}
+  }}
+}});""")
+
+        # 各模式胜率对比（条形图）
+        wr_labels = _chart_json([m["name"] for m in modes if m["win_rate"] is not None])
+        wr_data = _chart_json([m["win_rate"] for m in modes if m["win_rate"] is not None])
+        wr_colors = _chart_json(["rgba(46,204,113,0.7)" if v >= 50 else "rgba(231,76,60,0.7)" for v in [m["win_rate"] for m in modes if m["win_rate"] is not None]])
+        parts.append(f"""new Chart(document.getElementById('chart-career-mode-wr'),{{
+  type:'bar',
+  data:{{labels:{wr_labels},datasets:[{{label:'胜率 %',data:{wr_data},backgroundColor:{wr_colors},borderWidth:0}}]}},
+  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2,
+    plugins:{{legend:{{display:false}}}},
+    scales:{{y:{{min:0,max:100,ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}},title:{{display:true,text:'胜率 %',color:'#8b95a5'}}}},x:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}}}}
+  }}
+}});""")
+
     # 将每个图表的 aspectRatio 同步到父容器 CSS，确保 canvas 填满时不拉伸
     parts.append("""document.querySelectorAll('.chart-wrap canvas').forEach(function(c){
   var ch=Chart.getChart(c);
@@ -3181,7 +3553,7 @@ def _build_html(results: dict) -> str:
     export_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     css = _build_css()
     nav = _build_nav()
-    hero = _build_hero(ov)
+    hero = _build_hero(results)
     sections = "".join([
         _build_section_winrate(results),
         _build_section_game_rhythm(results),
@@ -3275,6 +3647,9 @@ def generate_report(
 
     matches = _load_matches(db_path)
     champion_mastery = _load_champion_mastery(db_path)
+    season_history = _load_season_history(db_path)
+    summoner_profile = _load_summoner_profile(db_path)
+    career_overview = _load_career_overview(db_path)
     if not matches:
         html = _build_empty_report(db_abs)
         dated_output.write_text(html, encoding="utf-8")
@@ -3308,8 +3683,13 @@ def generate_report(
         # 效率与风格
         "carry_profile": _analyze_carry_profile(matches),
         "multi_kill_impact": _analyze_multi_kill_impact(matches),
-        "lp_efficiency": _analyze_lp_efficiency(matches),
         "prime_time_matrix": _analyze_prime_time_matrix(matches),
+        # 赛季历史
+        "season_tier_timeline": _analyze_season_tier_timeline(season_history),
+        # 生涯全景
+        "summoner_profile_analysis": _analyze_summoner_profile(
+            summoner_profile, career_overview, overview,
+        ),
     }
     html = _build_html(results)
     dated_output.write_text(html, encoding="utf-8")
