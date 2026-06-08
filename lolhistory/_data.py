@@ -75,7 +75,7 @@ WEGAME_TIER_NAMES: dict[int, str] = {
 
 # ── 英雄 ID → 显示名称（从 WeGame 官方配置文件提取，175 个标准英雄 + 20 个末日人机变体） ──
 # 来源: wegame-api-export/英雄配置文件LOLChampion.*.js
-# 格式: "Ename 中文名"，与 LCU API champion-summary.json 中的 ID 对齐
+# 格式: "Ename 中文名"，英雄 ID 与 Riot 官方 champion-summary.json 对齐
 
 CHAMPION_DISPLAY: dict[int, str] = {
     1: "Annie 安妮",

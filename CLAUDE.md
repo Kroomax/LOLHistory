@@ -12,14 +12,10 @@
 .venv/Scripts/python -m lolhistory --extract-cookies ./my-exports       # 自定义目录
 .venv/Scripts/python -m lolhistory --extract-cookies -c cookies.json    # 指定输出文件名
 
-# 方法3 — WeGame API（默认，推荐，无需客户端）
+# WeGame API（无需客户端）
 .venv/Scripts/python -m lolhistory --cookies cookies.json
 .venv/Scripts/python -m lolhistory --cookies cookies.json -n 500 --detailed
 .venv/Scripts/python -m lolhistory --cookies cookies.json --detail-game GAME_ID
-
-# 方法1+2 — LCU API（需客户端运行）
-.venv/Scripts/python -m lolhistory --method lcu
-.venv/Scripts/python -m lolhistory --method lcu --game-dir "D:\Software\Wegame\英雄联盟(26)"
 
 # 数据分析 — 从 SQLite 生成交互式 HTML 报告
 .venv/Scripts/python -m lolhistory --analyze
@@ -31,29 +27,18 @@
 
 ## 架构
 
-MVP 结构，7 个模块各司其职，方法之间互不引用：
+MVP 结构，6 个模块各司其职：
 
 | 文件 | 用途 |
 |------|------|
-| `__main__.py` | CLI（argparse）+ 方法路由 + WeGame 流程编排（含自动获取召唤师/英雄熟练度/赛季报告/生涯统计） |
+| `__main__.py` | CLI（argparse）+ WeGame 流程编排（含自动获取召唤师/英雄熟练度/赛季报告/生涯统计） |
 | `_data.py` | 共享常量：`QUEUE_NAMES`(96)、`MAP_NAMES`(17)、`TFT_QUEUE_IDS`、`WEGAME_TIER_NAMES`(9)、工具函数 |
-| `_lcu.py` | 方法1+2：lockfile 4策略发现 → LCU ApiClient → 分页获取 → 解析 |
-| `_wegame.py` | 方法3：Cookie 认证 → WegameApiClient → 6 个 API 端点 + 6 个解析函数 |
-| `_cookie_extract.py` | 方法3 Cookie获取：从 Fiddler/Charles 导出的 HAR/raw/curl 文件中提取 cookie |
+| `_wegame.py` | WeGame API：Cookie 认证 → WegameApiClient → 6 个 API 端点 + 6 个解析函数 |
+| `_cookie_extract.py` | WeGame Cookie 获取：从 Fiddler/Charles 导出的 HAR/raw/curl 文件中提取 cookie |
 | `_export.py` | 导出：CSV（UTF-8 BOM）+ SQLite（6 张表） |
 | `_analysis.py` | 数据分析：从 SQLite 读取 → 30+ 维度分析 → 生成单个交互式 HTML 报告（6 章，~30 图表） |
 
-方法4（Riot官方API，国服不可用）未实现。LCU约100~200场，WeGame约500场且含段位/10人装备符文。
-
-## LCU API 关键点
-
-- **自签名证书** — 全局 `verify=False`
-- **Lockfile** — 格式 `name:PID:port:password:https`，每次客户端重启变化；国服 WeGame 启动时 lockfile 常为空
-- **空 lockfile** — `_lcu.py` 的 `_scan_process_cmdline()` 自动从进程命令行提取 `--app-port` 和 `--remoting-auth-token`
-- **响应双格式** — `{"games": {"games": [...]}}` 或 `{"games": [...]}`
-- **国服 403** — 反作弊拦截非白名单进程，绕过：`python.exe` → `RiotGamesApi.exe`
-
-> `Riot Client Data/User Data/Config/lockfile`（port 9918）是 Riot Client，无法访问 LCU 端点。
+`archive/_lcu.py` 为已弃用的 LCU API 实现（方法1+2），保留作为技术参考。Riot 官方 API（方法4，国服不可用）未实现。
 
 ## WeGame API 关键点
 
@@ -70,7 +55,7 @@ MVP 结构，7 个模块各司其职，方法之间互不引用：
 
 ### 自动流程
 
-运行 `--method wegame`（默认）时，**自动执行**（无需用户管理）：
+运行时**自动执行**（无需用户管理）：
 
 1. 连接测试 → **自动调用 `GetSummonerInfo`** → 显示召唤师等级/段位/胜率 → 缓存 openid
 2. **自动调用 `GetChampion`**（使用 openid）→ 显示 172 英雄熟练度 Top 3

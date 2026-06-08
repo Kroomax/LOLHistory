@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  从 WeGame 或客户端直连，一键导出完整的英雄联盟对局历史——<br>
+  从 WeGame 一键导出完整的英雄联盟对局历史——<br>
   段位变迁、KDA 走势、装备符文、10 人全量数据，全部落到你本地。
 </p>
 
@@ -36,7 +36,7 @@ League 客户端只展示最近 20 场。WeGame 助手虽然能看到更多，�
 
 | | |
 |---|---|
-| 🔌 **双数据源** | WeGame API（500 场 + 段位 + 装备符文）/ LCU API（客户端直连） |
+| 🔌 **WeGame API** | 无需客户端，最大 500 场 + 段位历史 + 装备符文 + 10 人详情 |
 | 🍪 **智能 Cookie 提取** | 丢一个 Fiddler/Charles/浏览器 抓包文件进去，自动识别 HAR、Raw、cURL、Charles 四种格式 |
 | 📊 **三种导出格式** | CSV（UTF-8 BOM，Excel 即开）+ SQLite（35 列 summary + 31 列 detail）+ JSON（完整原始数据） |
 | 🔄 **增量合并** | 重复运行自动去重追加——只拉新对局，不覆盖旧数据 |
@@ -55,7 +55,6 @@ League 客户端只展示最近 20 场。WeGame 助手虽然能看到更多，�
 ### 前置条件
 
 - **Python 3.10+**
-- Windows（LCU API 需要 Windows；WeGame API 理论跨平台）
 - WeGame Cookie（获取方式见下，一分钟搞定）
 
 ### 1. 安装
@@ -148,21 +147,6 @@ Cookie 还可以直接从命令行传入（无需文件）：
 python -m lolhistory --puin <puin> --pkey "<pkey>" --tgp-biz-ticket "<ticket>" --tgp-id <id>
 ```
 
-### LCU API（客户端需要开着）
-
-```bash
-python -m lolhistory --method lcu
-python -m lolhistory --method lcu -n 200 -f csv
-python -m lolhistory --method lcu --game-dir "D:\Software\Wegame\英雄联盟"
-```
-
-LCU 模式有 **4 种 lockfile 自动发现策略**：显式路径 → 游戏目录 → 已知路径扫描 → 进程命令行提取。绝大多数情况无需手动指定。
-
-> ⚠️ **国服 403 反作弊拦截？**  
-> 将 `python.exe` 重命名为 `RiotGamesApi.exe` 即可绕过：  
-> `copy .venv\Scripts\python.exe .venv\Scripts\RiotGamesApi.exe`  
-> `.venv\Scripts\RiotGamesApi.exe -m lolhistory --method lcu`
-
 ---
 
 ## 📋 导出数据说明
@@ -236,12 +220,7 @@ python -m lolhistory --analyze --session-gap 2.0            # 调整 Session 间
 
 <details>
 <summary><strong>为什么只能拉到 ~500 场？</strong></summary>
-WeGame API 服务端限制，<code>offset ≥ 500</code> 直接返回空。LCU API 更少（~200 场）。这是腾讯后端的数据保留策略，国服目前没有已知方式突破。
-</details>
-
-<details>
-<summary><strong>LCU API 和 WeGame API 数据有什么区别？</strong></summary>
-WeGame 场次更多（500 vs 200），且包含段位历史、MVP/SVP 等荣誉标记。LCU 优势是不需要抓 Cookie，客户端开着就能用。推荐优先使用 WeGame。
+WeGame API 服务端限制，<code>offset ≥ 500</code> 直接返回空。这是腾讯后端的数据保留策略，国服目前没有已知方式突破。
 </details>
 
 <details>
@@ -262,14 +241,15 @@ WeGame 场次更多（500 vs 200），且包含段位历史、MVP/SVP 等荣誉�
 
 ```
 lolhistory/
-├── __main__.py             # CLI 入口 + 参数解析 + 路由到 WeGame / LCU / Cookie 提取
+├── __main__.py             # CLI 入口 + 参数解析 + WeGame 流程编排
 ├── _wegame.py              # WeGame API：Cookie 认证 · 分页 · 详情 · 解析
-├── _lcu.py                 # LCU API：4 策略 lockfile 发现 · 对局拉取 · 解析
 ├── _cookie_extract.py      # Cookie 自动提取：HAR / Raw / cURL / Charles 四种格式
-├── _export.py              # 导出引擎：CSV (UTF-8 BOM) + SQLite (两表) + 增量去重
+├── _export.py              # 导出引擎：CSV (UTF-8 BOM) + SQLite (六表) + 增量去重
 ├── _data.py                # 共享常量：96 队列 + 17 地图名称映射 + TFT 过滤列表
 ├── _analysis.py            # 数据分析：30+ 维度 → 交互式 HTML 报告
 └── requirements.txt        # 单一依赖：requests
+archive/
+└── _lcu.py                 # [已弃用] LCU API 实现，保留作为技术参考
 ```
 
 ---
