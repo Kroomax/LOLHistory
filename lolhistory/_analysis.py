@@ -2392,7 +2392,7 @@ def _analyze_season_stats(season_history: list[dict]) -> dict:
         total = (s.get("total_games", 0) or 0) + (s.get("team_total", 0) or 0)
         wins = (s.get("wins", 0) or 0) + (s.get("team_wins", 0) or 0)
         games_list.append(total)
-        wr_list.append(round(wins / total * 100, 1) if total > 0 else 0)
+        wr_list.append(round(wins / total * 100, 1) if total > 0 else None)
 
     if not labels:
         return {"labels": [], "games": [], "win_rates": [], "summary": "暂无有效赛季数据。"}
@@ -2865,7 +2865,6 @@ def _build_section_game_rhythm(r: dict) -> str:
     # 游戏轮次规模分布（双列）
     size_card = f"""<div class="chart-card">
     <h3>📏 游戏轮次规模分布</h3>
-    <p style="font-size:12px;color:#5a6575;margin-bottom:8px">相邻对局间隔≤2小时的连续游戏序列</p>
     <div class="chart-wrap"><canvas id="chart-session-size"></canvas></div>
     <p class="summary">{sess.get("size_summary", "")}</p>
     </div>"""
@@ -2890,7 +2889,7 @@ def _build_section_game_rhythm(r: dict) -> str:
         _chart_card("🎰 '再来一局'陷阱", "chart-one-more", omg.get("summary", "")),
         _chart_card("🎢 输后与赢后胜率", "chart-tilt", tilt.get("summary", "")),
     ]
-    return f'<section id="game-rhythm" class="section"><div class="section-title">🎮 游戏节奏</div><div class="section-subtitle">游戏轮次模式、连续对局行为与胜率转移规律</div><div class="chart-grid">{"".join(cards)}</div></section>'
+    return f'<section id="game-rhythm" class="section"><div class="section-title">🎮 游戏节奏</div><div class="section-subtitle">游戏轮次模式（相邻对局间隔较短的连续游戏序列）、连续对局行为与胜率转移规律</div><div class="chart-grid">{"".join(cards)}</div></section>'
 
 def _build_section_psychology(r: dict) -> str:
     """游戏心理 — 报告第4章。"""
@@ -2992,14 +2991,12 @@ def _build_section_attendance(r: dict) -> str:
     if pt.get("cells"):
         cards.append(f"""<div class="chart-card full">
     <h3>🗺️ 游戏时段热力图（胜率）</h3>
-    <p style="font-size:12px;color:#5a6575;margin-bottom:8px">行=星期, 列=每2小时段. 颜色=胜率(绿高红低). 空白=数据不足(&lt;3场).</p>
     <div id="heatmap-prime-time" style="overflow-x:auto"></div>
     <p class="summary">{pt.get('summary', '')}</p>
     </div>""")
     if pt.get("game_cells"):
         cards.append(f"""<div class="chart-card full">
     <h3>📊 对局数量热力图</h3>
-    <p style="font-size:12px;color:#5a6575;margin-bottom:8px">行=星期, 列=每2小时段. 颜色深浅=对局数量. 空白=无对局.</p>
     <div id="heatmap-game-count" style="overflow-x:auto"></div>
     <p class="summary">展示各时段的对局频次分布，颜色越深表示该时段对局越多。</p>
     </div>""")
@@ -3239,7 +3236,7 @@ def _build_all_charts(r: dict) -> str:
   data:{{labels:{_chart_json(ss.get('labels',[]))},
     datasets:[
       {{label:'对局数量',data:{_chart_json(ss.get('games',[]))},backgroundColor:'rgba(74,158,255,0.6)',borderColor:'#4a9eff',borderWidth:1,yAxisID:'y',order:2}},
-      {{label:'胜率 %',data:{_chart_json(ss.get('win_rates',[]))},borderColor:'#f59e0b',backgroundColor:'rgba(245,158,11,0.08)',borderWidth:2.5,pointRadius:5,pointBackgroundColor:'#f59e0b',pointBorderColor:'#f59e0b',yAxisID:'y1',type:'line',tension:0.3,fill:false,order:1}}
+      {{label:'胜率 %',data:{_chart_json(ss.get('win_rates',[]))},borderColor:'#f59e0b',backgroundColor:'rgba(245,158,11,0.08)',borderWidth:2.5,pointRadius:5,pointBackgroundColor:'#f59e0b',pointBorderColor:'#f59e0b',yAxisID:'y1',type:'line',tension:0.3,fill:false,spanGaps:true,order:1}}
     ]
   }},
   options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2.5,
@@ -3291,7 +3288,7 @@ def _build_all_charts(r: dict) -> str:
   data:{{labels:{_chart_json(sess.get('size_labels',[]))},
     datasets:[{{label:'次数',data:{_chart_json(sess.get('size_counts',[]))},backgroundColor:'rgba(74,158,255,0.7)',borderColor:'#4a9eff',borderWidth:1}}]
   }},
-  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:3.5,plugins:{{legend:{{display:false}}}},
+  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2,plugins:{{legend:{{display:false}}}},
     scales:{{y:{{ticks:{{color:'#8b95a5',stepSize:1}},grid:{{color:'#2a3a4a'}},title:{{display:true,text:'次数',color:'#8b95a5'}}}},x:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}},title:{{display:true,text:'每轮游戏局数',color:'#8b95a5'}}}}}}
   }}
 }});""")
@@ -3419,18 +3416,20 @@ def _build_all_charts(r: dict) -> str:
   }}
 }});""")
 
-    # 投降分析
+    # 投降分析（柱状图）
     surr = r.get("surrender", {})
     total_g = r.get("overview", {}).get("total_games", 0)
     enemy_ff = surr.get("enemy_ff", 0)
     our_ff = surr.get("our_ff", 0)
     fought_on = total_g - enemy_ff - our_ff
     parts.append(f"""new Chart(document.getElementById('chart-surrender'),{{
-  type:'doughnut',
+  type:'bar',
   data:{{labels:['对方投降(赢)','我方投降(输)','战斗到结束'],
-    datasets:[{{data:[{enemy_ff},{our_ff},{fought_on}],backgroundColor:['rgba(46,204,113,0.7)','rgba(231,76,60,0.7)','rgba(74,158,255,0.7)'],borderColor:['#2ecc71','#e74c3c','#4a9eff'],borderWidth:1}}]
+    datasets:[{{label:'场次',data:[{enemy_ff},{our_ff},{fought_on}],backgroundColor:['rgba(46,204,113,0.7)','rgba(231,76,60,0.7)','rgba(74,158,255,0.7)'],borderColor:['#2ecc71','#e74c3c','#4a9eff'],borderWidth:1}}]
   }},
-  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:1.5,plugins:{{legend:{{labels:{{color:'#8b95a5'}}}}}}}}
+  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2,plugins:{{legend:{{display:false}}}},
+    scales:{{y:{{ticks:{{color:'#8b95a5',stepSize:1}},grid:{{color:'#2a3a4a'}},title:{{display:true,text:'场次',color:'#8b95a5'}}}},x:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}}}}
+  }}
 }});""")
 
     # AFK
@@ -3450,7 +3449,6 @@ def _build_all_charts(r: dict) -> str:
     mode_name = gold.get("mode_name", "")
     excluded = gold.get("excluded_short", 0)
     gpm_title = f"每分钟金币 vs 对局时长 — {mode_name}" if mode_name else "每分钟金币 vs 对局时长"
-    gpm_subtitle = f"（已排除 {excluded} 场 <4min 重开局，GPM = 每分钟金币）" if excluded > 0 else "（GPM = 每分钟金币）"
     parts.append(f"""new Chart(document.getElementById('chart-gpm'),{{
   type:'scatter',
   data:{{datasets:[
@@ -3458,7 +3456,7 @@ def _build_all_charts(r: dict) -> str:
     {{label:'负',data:{_chart_json(gold.get('scatter_loss',[]))},backgroundColor:'rgba(231,76,60,0.5)',borderColor:'#e74c3c',pointRadius:3}}
   ]}},
   options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2,
-    plugins:{{legend:{{labels:{{color:'#8b95a5'}}}},title:{{display:true,text:{_chart_json(gpm_subtitle)},color:'#8b95a5',font:{{size:11}}}}}},
+    plugins:{{legend:{{labels:{{color:'#8b95a5'}}}}}},
     scales:{{y:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}},title:{{display:true,text:'GPM (每分钟金币)',color:'#8b95a5'}}}},x:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}},title:{{display:true,text:'对局时长 (分钟)',color:'#8b95a5'}}}}}}
   }}
 }});""")
@@ -3659,7 +3657,7 @@ def _build_all_charts(r: dict) -> str:
     md = sa.get("mode_distribution", {}) if sa.get("has_career") else {}
     modes = md.get("modes", [])
     if modes:
-        # 全模式生涯分布（环形图）
+        # 全模式生涯分布（纵向柱状图，顺序与胜率对比一致）
         mode_labels = _chart_json([m["name"] for m in modes])
         mode_data = _chart_json([m["games"] for m in modes])
         mode_colors = _chart_json([
@@ -3667,10 +3665,11 @@ def _build_all_charts(r: dict) -> str:
             "rgba(168,85,247,0.8)", "rgba(149,165,166,0.8)", "rgba(236,72,153,0.8)",
         ][:len(modes)])
         parts.append(f"""new Chart(document.getElementById('chart-career-mode-dist'),{{
-  type:'doughnut',
-  data:{{labels:{mode_labels},datasets:[{{data:{mode_data},backgroundColor:{mode_colors},borderWidth:1}}]}},
-  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:1.8,
-    plugins:{{legend:{{labels:{{color:'#8b95a5'}}}}}}
+  type:'bar',
+  data:{{labels:{mode_labels},datasets:[{{label:'场次',data:{mode_data},backgroundColor:{mode_colors},borderWidth:0}}]}},
+  options:{{responsive:true,maintainAspectRatio:true,aspectRatio:2,
+    plugins:{{legend:{{display:false}}}},
+    scales:{{y:{{ticks:{{color:'#8b95a5',stepSize:1}},grid:{{color:'#2a3a4a'}},title:{{display:true,text:'场次',color:'#8b95a5'}}}},x:{{ticks:{{color:'#8b95a5'}},grid:{{color:'#2a3a4a'}}}}}}
   }}
 }});""")
 
