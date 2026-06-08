@@ -564,7 +564,7 @@ def parse_battle_detail(detail_data: dict, my_openid: str = "") -> dict:
 # ──────────────────────────────────────────────────────────────────────────
 
 def fetch_battle_list(client: WegameApiClient, area: int = 1,
-                      max_games: int = 50000, count_per_page: int = 10,
+                      max_games: int = 50000,
                       skip_tft: bool = True, delay_ms: int = 200,
                       existing_ids: set[str] | None = None) -> list[dict]:
     """通过 GetBattleList 分页获取全部可用对局历史。
@@ -572,6 +572,7 @@ def fetch_battle_list(client: WegameApiClient, area: int = 1,
     返回原始对局字典列表（按时间倒序，最新在前）。
     若提供 existing_ids，遇到已入库对局时立即停止，避免重复获取。
     """
+    COUNT = 10  # WeGame API 固定每页最大 10 条
     all_battles = []
     seen_ids = set()
     offset = 0
@@ -580,7 +581,7 @@ def fetch_battle_list(client: WegameApiClient, area: int = 1,
     while len(all_battles) < max_games:
         try:
             data = client.get_battle_list(
-                area=area, offset=offset, count=count_per_page)
+                area=area, offset=offset, count=COUNT)
         except WegameApiError as e:
             logger.error("API 错误 (offset %d): %s", offset, e)
             if e.status_code in (401, 403) or e.status_code >= 8000000:
@@ -594,7 +595,7 @@ def fetch_battle_list(client: WegameApiClient, area: int = 1,
             if empty_streak >= 2:
                 logger.info("offset %d 处无更多对局", offset)
                 break
-            offset += count_per_page
+            offset += COUNT
             continue
 
         empty_streak = 0
@@ -622,11 +623,11 @@ def fetch_battle_list(client: WegameApiClient, area: int = 1,
 
         if len(all_battles) >= max_games:
             break
-        if new_count < count_per_page / 2:
+        if new_count < COUNT / 2:
             logger.info("稀疏页面 — 可能已到达数据末尾")
             break
 
-        offset += count_per_page
+        offset += COUNT
         if delay_ms:
             time.sleep(delay_ms / 1000.0)
 

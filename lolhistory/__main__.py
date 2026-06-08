@@ -1,14 +1,19 @@
 """lolhistory 入口点 — 英雄联盟对局历史导出工具。
 
 用法:
-    # 首先获取 Cookie（从 Fiddler/Charles 抓包导出文件中提取）
+    # 第一步：从抓包文件提取 Cookie
     python -m lolhistory --extract-cookies
-    python -m lolhistory --extract-cookies ./wegame-api-export
+    python -m lolhistory --extract-cookies ./my-exports -c my_cookies.json
 
-    # WeGame API（无需客户端）
-    python -m lolhistory --cookies cookies.json
-    python -m lolhistory --cookies cookies.json -n 500 --detailed
-    python -m lolhistory --cookies cookies.json --detail-game GAME_ID
+    # 第二步：获取对局历史
+    python -m lolhistory --cookies cookies.json                # 获取全部对局
+    python -m lolhistory --cookies cookies.json -n 50          # 获取最近 50 场
+    python -m lolhistory --cookies cookies.json --detail       # 含 10 人详情数据
+    python -m lolhistory --cookies cookies.json --detail-game 10979787952  # 单场详情
+
+    # 第三步：生成分析报告
+    python -m lolhistory --analyze                             # 默认数据库
+    python -m lolhistory --analyze --db my_matches.db --output my_report.html
 """
 
 import argparse
@@ -18,7 +23,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from ._data import get_queue_name, sanitize_filename
+from ._data import get_queue_name
 
 logger = logging.getLogger("lolhistory")
 
@@ -33,12 +38,25 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  python -m lolhistory --cookies cookies.json
-  python -m lolhistory --cookies cookies.json -n 500 --detailed
-  python -m lolhistory --cookies cookies.json --detail-game 10979787952
+  # 第一步：从抓包文件提取 Cookie
+  python -m lolhistory --extract-cookies
+  python -m lolhistory --extract-cookies ./my-exports -c my_cookies.json
 
-  # 通过 CLI 参数直接传入认证信息
-  python -m lolhistory --puin 1079564392 --pkey "0003..." --tgp-biz-ticket "0100..." --tgp-id 12460692
+  # 第二步：获取对局历史
+  python -m lolhistory --cookies cookies.json                # 获取全部对局
+  python -m lolhistory --cookies cookies.json -n 50          # 获取最近 50 场
+  python -m lolhistory --cookies cookies.json --detail       # 含 10 人详情数据
+  python -m lolhistory --cookies cookies.json --detail-game 10979787952  # 单场详情
+
+  # 第三步：生成分析报告
+  python -m lolhistory --analyze                             # 默认数据库
+  python -m lolhistory --analyze --db my_matches.db --output my_report.html
+
+  # 直接传 Cookie（无需文件，4 个参数均必填）
+  python -m lolhistory --puin YOUR_PUIN --pkey "0003..." --tgp-biz-ticket "0100..." --tgp-id YOUR_TGP_ID
+
+  # 其他大区
+  python -m lolhistory --cookies cookies.json --area 4       # 4=班德尔城
         """,
     )
 
@@ -60,20 +78,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ── 获取选项 ────────────────────────────────────────────────────────
     fetch = p.add_argument_group("获取选项")
-    fetch.add_argument("-n", "--max-games", type=int, default=50000,
-                       help="最大获取对局数（默认: 50000）")
-    fetch.add_argument("--delay", type=int, default=None,
-                       help="API 请求间隔毫秒数（默认: 200）")
-    fetch.add_argument("--count-per-page", type=int, default=10,
-                       help="WeGame 每页对局数（最大 10，默认: 10）")
-    fetch.add_argument("--no-tft", action="store_true", default=True,
-                       help="跳过云顶之弈对局（默认开启）")
-    fetch.add_argument("--include-tft", action="store_true",
-                       help="包含云顶之弈对局")
+    fetch.add_argument("-n", "--max-games", type=int, default=501,
+                       help="最大获取对局数（默认: 501，即获取全部可用对局）")
 
     # ── 详情 ─────────────────────────────────────────────────────────────
     detail = p.add_argument_group("对局详情")
-    detail.add_argument("--detailed", action="store_true",
+    detail.add_argument("--detail", action="store_true",
                         help="为每场对局获取完整详情 (GetBattleDetail)")
     detail.add_argument("--detail-game", metavar="GAME_ID",
                         help="获取并展示单场对局的完整详情，然后退出")
@@ -84,17 +94,8 @@ def build_parser() -> argparse.ArgumentParser:
                      help="跳过 CSV 导出（仅导出 SQLite）")
     out.add_argument("-o", "--output-dir", default=".",
                      help="输出目录（默认: 当前目录）")
-    out.add_argument("--output-prefix", default=None,
-                     help="自定义文件名前缀（默认: wegame_matches）")
     out.add_argument("--no-sqlite", action="store_true",
                      help="跳过 SQLite 导出（仅导出 CSV）")
-
-    # ── 断点续传 ─────────────────────────────────────────────────────────
-    cp = p.add_argument_group("断点续传")
-    cp.add_argument("--checkpoint", action="store_true",
-                    help="保存/加载进度，便于中断后恢复")
-    cp.add_argument("--checkpoint-file", default=None,
-                    help="断点续传文件路径")
 
     # ── 数据分析 ─────────────────────────────────────────────────────────
     ana = p.add_argument_group("数据分析")
@@ -104,8 +105,6 @@ def build_parser() -> argparse.ArgumentParser:
                      help="SQLite 数据库路径（默认: wegame_matches.db）")
     ana.add_argument("--output", dest="html_output", default="report.html",
                      help="HTML 报告输出路径（默认: report.html，自动添加日期后缀）")
-    ana.add_argument("--session-gap", type=float, default=2.0,
-                     help="游戏轮次判定间隔小时数（默认: 2.0）")
 
     # ── 其他 ─────────────────────────────────────────────────────────────
     p.add_argument("-v", "--verbose", action="store_true", help="详细日志输出")
@@ -154,8 +153,8 @@ def run_wegame(args) -> int:
               file=sys.stderr)
         return 1
 
-    delay = args.delay if args.delay is not None else 200
-    skip_tft = not args.include_tft
+    delay = 200
+    skip_tft = True
 
     client = WegameApiClient(cookies)
     if args.openid:
@@ -203,7 +202,7 @@ def run_wegame(args) -> int:
                       f"装备={items} {is_me}")
 
             # 导出单场详情
-            prefix = args.output_prefix or f"wegame_detail_{args.detail_game}"
+            prefix = f"wegame_detail_{args.detail_game}"
             out = Path(args.output_dir)
             out.mkdir(parents=True, exist_ok=True)
 
@@ -326,56 +325,35 @@ def run_wegame(args) -> int:
     except Exception as e:
         logger.warning("获取赛季战斗报告时出现意外错误: %s", e)
 
-    # ── 断点续传 ───────────────────────────────────────────────────────
-    cp_file = args.checkpoint_file or "wegame_checkpoint.json"
-    cp_battles = []
-    cp_details = {}
-
-    if args.checkpoint:
-        import json as _json
-        if os.path.exists(cp_file):
-            try:
-                with open(cp_file, "r", encoding="utf-8") as f:
-                    cp = _json.load(f)
-                cp_battles = cp.get("battles", [])
-                cp_details = cp.get("detailed", {})
-                if cp_battles:
-                    print(f"\n从断点恢复: {len(cp_battles)} 场对局")
-            except (_json.JSONDecodeError, OSError):
-                pass
-
     # ── 获取对局列表 ────────────────────────────────────────────────────
     # 提前确定输出路径，供列表和详情两阶段独立查询 DB
-    prefix = args.output_prefix or "wegame_matches"
+    prefix = "wegame_matches"
     db_path = str(Path(args.output_dir) / f"{prefix}.db")
 
-    if cp_battles:
-        all_battles = cp_battles
-    else:
-        # 查询 match_summary 中已有的对局 ID，避免重复获取列表 API
-        existing_ids = set()
-        if os.path.exists(db_path):
-            import sqlite3
-            conn = sqlite3.connect(db_path)
-            # 旧库升级：确保 area 列存在
-            try:
-                conn.execute("ALTER TABLE match_summary ADD COLUMN area INTEGER DEFAULT 1")
-            except sqlite3.OperationalError:
-                pass
-            rows = conn.execute(
-                "SELECT game_id FROM match_summary WHERE area = ?", (args.area,)
-            ).fetchall()
-            existing_ids = {r[0] for r in rows}
-            conn.close()
-            if existing_ids:
-                print(f"  数据库中已有 {len(existing_ids)} 条记录，将跳过重复获取")
+    # 查询 match_summary 中已有的对局 ID，避免重复获取列表 API
+    existing_ids = set()
+    if os.path.exists(db_path):
+        import sqlite3
+        conn = sqlite3.connect(db_path)
+        # 旧库升级：确保 area 列存在
+        try:
+            conn.execute("ALTER TABLE match_summary ADD COLUMN area INTEGER DEFAULT 1")
+        except sqlite3.OperationalError:
+            pass
+        rows = conn.execute(
+            "SELECT game_id FROM match_summary WHERE area = ?", (args.area,)
+        ).fetchall()
+        existing_ids = {r[0] for r in rows}
+        conn.close()
+        if existing_ids:
+            print(f"  数据库中已有 {len(existing_ids)} 条记录，将跳过重复获取")
 
-        print(f"\n正在获取对局列表（最多 {args.max_games} 场）...")
-        all_battles = fetch_battle_list(
-            client, area=args.area, max_games=args.max_games,
-            count_per_page=args.count_per_page, skip_tft=skip_tft,
-            delay_ms=delay, existing_ids=existing_ids or None,
-        )
+    print(f"\n正在获取对局列表（最多 {args.max_games} 场）...")
+    all_battles = fetch_battle_list(
+        client, area=args.area, max_games=args.max_games,
+        skip_tft=skip_tft, delay_ms=delay,
+        existing_ids=existing_ids or None,
+    )
 
     total = len(all_battles)
     print(f"\n共获取到: {total} 场对局")
@@ -400,66 +378,55 @@ def run_wegame(args) -> int:
         newest = datetime.fromtimestamp(max(timestamps)).strftime("%Y-%m-%d")
         print(f"  时间范围: {oldest} → {newest}")
 
-    # 获取列表后保存断点
-    if args.checkpoint:
-        _save_cp(cp_file, all_battles, None)
-        print(f"  断点已保存: {cp_file}")
-
     # ── 获取详情（可选）─────────────────────────────────────────────────
     detail_data = {}
-    if args.detailed:
-        if cp_details:
-            detail_data = cp_details
-            print(f"\n使用断点中已缓存的 {len(detail_data)} 条详情")
+    if args.detail:
+        game_ids = [str(b.get("game_id", "")) for b in all_battles if b.get("game_id")]
+        game_ids_set = set(game_ids)
+
+        # 查询已有详情 + 回填缺失详情（应对之前未加 --detail 导致 detail 表为空）
+        existing_detail_ids: set[str] = set()
+        backfill_ids: set[str] = set()
+        if os.path.exists(db_path):
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.execute("ALTER TABLE match_detail ADD COLUMN area INTEGER DEFAULT 1")
+            except sqlite3.OperationalError:
+                pass
+            rows = conn.execute(
+                "SELECT DISTINCT game_id FROM match_detail WHERE area = ?", (args.area,)
+            ).fetchall()
+            existing_detail_ids = {r[0] for r in rows}
+            # 回填：match_summary 有但 match_detail 缺失的对局
+            rows2 = conn.execute("""
+                SELECT DISTINCT ms.game_id FROM match_summary ms
+                WHERE ms.area = ?
+                AND ms.game_id NOT IN (
+                    SELECT DISTINCT game_id FROM match_detail WHERE area = ?
+                )
+            """, (args.area, args.area)).fetchall()
+            backfill_ids = {r[0] for r in rows2}
+            conn.close()
+
+        # 合并：当前获取的对局在前，历史缺失详情的对局在后
+        new_backfill = backfill_ids - game_ids_set - existing_detail_ids
+        if new_backfill:
+            print(f"\n  发现 {len(new_backfill)} 场历史对局缺少详情，将一并补获取")
+        all_detail_ids = game_ids + sorted(new_backfill)
+
+        new_game_ids = [gid for gid in all_detail_ids if gid not in existing_detail_ids]
+        skipped = len(all_detail_ids) - len(new_game_ids)
+        if skipped:
+            print(f"\n正在获取 {len(new_game_ids)} 场对局详情（{skipped} 场已有，跳过）...")
         else:
-            game_ids = [str(b.get("game_id", "")) for b in all_battles if b.get("game_id")]
-            game_ids_set = set(game_ids)
-
-            # 查询已有详情 + 回填缺失详情（应对之前未加 --detailed 导致 detail 表为空）
-            existing_detail_ids: set[str] = set()
-            backfill_ids: set[str] = set()
-            if os.path.exists(db_path):
-                import sqlite3
-                conn = sqlite3.connect(db_path)
-                try:
-                    conn.execute("ALTER TABLE match_detail ADD COLUMN area INTEGER DEFAULT 1")
-                except sqlite3.OperationalError:
-                    pass
-                rows = conn.execute(
-                    "SELECT DISTINCT game_id FROM match_detail WHERE area = ?", (args.area,)
-                ).fetchall()
-                existing_detail_ids = {r[0] for r in rows}
-                # 回填：match_summary 有但 match_detail 缺失的对局
-                rows2 = conn.execute("""
-                    SELECT DISTINCT ms.game_id FROM match_summary ms
-                    WHERE ms.area = ?
-                    AND ms.game_id NOT IN (
-                        SELECT DISTINCT game_id FROM match_detail WHERE area = ?
-                    )
-                """, (args.area, args.area)).fetchall()
-                backfill_ids = {r[0] for r in rows2}
-                conn.close()
-
-            # 合并：当前获取的对局在前，历史缺失详情的对局在后
-            new_backfill = backfill_ids - game_ids_set - existing_detail_ids
-            if new_backfill:
-                print(f"\n  发现 {len(new_backfill)} 场历史对局缺少详情，将一并补获取")
-            all_detail_ids = game_ids + sorted(new_backfill)
-
-            new_game_ids = [gid for gid in all_detail_ids if gid not in existing_detail_ids]
-            skipped = len(all_detail_ids) - len(new_game_ids)
-            if skipped:
-                print(f"\n正在获取 {len(new_game_ids)} 场对局详情（{skipped} 场已有，跳过）...")
-            else:
-                print(f"\n正在获取 {len(all_detail_ids)} 场对局详情...")
-            est_min = len(new_game_ids) * delay / 1000 / 60
-            if est_min > 1:
-                print(f"  （预计约 {est_min:.0f} 分钟，延迟 {delay}ms）")
-            if new_game_ids:
-                detail_data = fetch_battle_details(
-                    client, new_game_ids, area=args.area, delay_ms=delay)
-            if args.checkpoint:
-                _save_cp(cp_file, all_battles, detail_data)
+            print(f"\n正在获取 {len(all_detail_ids)} 场对局详情...")
+        est_min = len(new_game_ids) * delay / 1000 / 60
+        if est_min > 1:
+            print(f"  （预计约 {est_min:.0f} 分钟，延迟 {delay}ms）")
+        if new_game_ids:
+            detail_data = fetch_battle_details(
+                client, new_game_ids, area=args.area, delay_ms=delay)
 
     # ── 解析与导出 ──────────────────────────────────────────────────────
     out = Path(args.output_dir)
@@ -490,13 +457,6 @@ def run_wegame(args) -> int:
     for fmt_name, filepath in results.items():
         print(f"  [{fmt_name.upper()}] → {filepath}")
 
-    # 成功完成后清理断点文件
-    if args.checkpoint and os.path.exists(cp_file):
-        try:
-            os.remove(cp_file)
-        except OSError:
-            pass
-
     # ── 摘要 ────────────────────────────────────────────────────────────
     print(f"\n{'=' * 60}")
     print(f"  导出完成！")
@@ -508,16 +468,6 @@ def run_wegame(args) -> int:
 
     client.close()
     return 0
-
-
-def _save_cp(filepath: str, battles: list, details: dict | None):
-    import json as _json
-    cp = {"saved_at": datetime.now().isoformat(), "total": len(battles),
-          "battles": battles}
-    if details:
-        cp["detailed"] = details
-    with open(filepath, "w", encoding="utf-8") as f:
-        _json.dump(cp, f, ensure_ascii=False, indent=2)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -579,7 +529,6 @@ def main(argv: list[str] | None = None) -> int:
             path = generate_report(
                 db_path=args.db,
                 output_path=args.html_output,
-                session_gap_hours=args.session_gap,
             )
             print(f"\n[OK] 分析报告已生成: {path}")
             print(f"   在浏览器中打开即可查看。")

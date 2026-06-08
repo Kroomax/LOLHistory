@@ -14,13 +14,12 @@
 
 # WeGame API（无需客户端）
 .venv/Scripts/python -m lolhistory --cookies cookies.json
-.venv/Scripts/python -m lolhistory --cookies cookies.json -n 500 --detailed
+.venv/Scripts/python -m lolhistory --cookies cookies.json -n 50 --detail
 .venv/Scripts/python -m lolhistory --cookies cookies.json --detail-game GAME_ID
 
 # 数据分析 — 从 SQLite 生成交互式 HTML 报告
 .venv/Scripts/python -m lolhistory --analyze
 .venv/Scripts/python -m lolhistory --analyze --db my_matches.db --output my_report.html
-.venv/Scripts/python -m lolhistory --analyze --session-gap 2.0
 ```
 
 无测试、lint 或构建步骤。
@@ -114,7 +113,7 @@ WEGAME_TIER_NAMES = {0: "未定级", 1: "钻石", 2: "翡翠", 3: "铂金",
 
 ## 数据分析 (_analysis.py)
 
-CLI: `python -m lolhistory --analyze [--db wegame_matches.db] [--output report.html] [--session-gap 2.0]`
+CLI: `python -m lolhistory --analyze [--db wegame_matches.db] [--output report.html]`
 
 从 SQLite (`match_summary`) 读取全量对局 → 30+ 维度分析 → 输出单个静态交互式 HTML。
 
