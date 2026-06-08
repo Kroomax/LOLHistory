@@ -179,21 +179,24 @@ def run_wegame(args) -> int:
             print(f"  提前投降: {bool(detail['was_early_surrender'])}")
             print(f"\n  队伍数据:")
             for team in detail["teams"]:
-                print(f"    队伍 {team.get('team_id', '?')}: "
-                      f"击杀={team.get('kills', 0)} 死亡={team.get('deaths', 0)} "
-                      f"助攻={team.get('assists', 0)} | "
-                      f"金币={team.get('gold_earned', 0)} | "
+                print(f"    队伍 {team.get('teamId', '?')}: "
+                      f"击杀={team.get('totalKills', 0)} 死亡={team.get('totalDeaths', 0)} "
+                      f"助攻={team.get('totalAssists', 0)} | "
+                      f"金币={team.get('totalGoldEarned', 0)} | "
                       f"Bans={team.get('banInfoList', [])}")
 
             print(f"\n  玩家 ({len(detail['all_players'])} 人):")
             my_id = client.openid or ""
             for pl in detail["all_players"]:
                 is_me = "← 你" if (my_id and pl.get("openid") == my_id) else ""
-                name = pl.get("summoner_name", "Unknown")
-                k = pl.get("kills", 0) or 0
-                d = pl.get("deaths", 0) or 0
+                # WeGame API 返回 camelCase 字段: championsKilled, numDeaths, championId
+                raw_name = pl.get("name", "Unknown")
+                from urllib.parse import unquote as _unquote
+                name = _unquote(raw_name) if raw_name else "Unknown"
+                k = pl.get("championsKilled", 0) or 0
+                d = pl.get("numDeaths", 0) or 0
                 a = pl.get("assists", 0) or 0
-                champ = pl.get("champion_id", 0)
+                champ = pl.get("championId", 0) or 0
                 items = [pl.get(f"item{i}", 0) for i in range(7)]
                 print(f"    {name:<20s} 英雄={champ:<5d} "
                       f"击杀={k:<3d} 死亡={d:<3d} 助攻={a:<3d} "
@@ -342,12 +345,14 @@ def run_wegame(args) -> int:
                 pass
 
     # ── 获取对局列表 ────────────────────────────────────────────────────
+    # 提前确定输出路径，供列表和详情两阶段独立查询 DB
+    prefix = args.output_prefix or "wegame_matches"
+    db_path = str(Path(args.output_dir) / f"{prefix}.db")
+
     if cp_battles:
         all_battles = cp_battles
     else:
-        # 查询数据库中已有对局 ID，避免重复获取 API
-        prefix = args.output_prefix or "wegame_matches"
-        db_path = str(Path(args.output_dir) / f"{prefix}.db")
+        # 查询 match_summary 中已有的对局 ID，避免重复获取列表 API
         existing_ids = set()
         if os.path.exists(db_path):
             import sqlite3
@@ -408,17 +413,55 @@ def run_wegame(args) -> int:
             print(f"\n使用断点中已缓存的 {len(detail_data)} 条详情")
         else:
             game_ids = [str(b.get("game_id", "")) for b in all_battles if b.get("game_id")]
-            print(f"\n正在获取 {len(game_ids)} 场对局详情...")
-            est_min = len(game_ids) * delay / 1000 / 60
+            game_ids_set = set(game_ids)
+
+            # 查询已有详情 + 回填缺失详情（应对之前未加 --detailed 导致 detail 表为空）
+            existing_detail_ids: set[str] = set()
+            backfill_ids: set[str] = set()
+            if os.path.exists(db_path):
+                import sqlite3
+                conn = sqlite3.connect(db_path)
+                try:
+                    conn.execute("ALTER TABLE match_detail ADD COLUMN area INTEGER DEFAULT 1")
+                except sqlite3.OperationalError:
+                    pass
+                rows = conn.execute(
+                    "SELECT DISTINCT game_id FROM match_detail WHERE area = ?", (args.area,)
+                ).fetchall()
+                existing_detail_ids = {r[0] for r in rows}
+                # 回填：match_summary 有但 match_detail 缺失的对局
+                rows2 = conn.execute("""
+                    SELECT DISTINCT ms.game_id FROM match_summary ms
+                    WHERE ms.area = ?
+                    AND ms.game_id NOT IN (
+                        SELECT DISTINCT game_id FROM match_detail WHERE area = ?
+                    )
+                """, (args.area, args.area)).fetchall()
+                backfill_ids = {r[0] for r in rows2}
+                conn.close()
+
+            # 合并：当前获取的对局在前，历史缺失详情的对局在后
+            new_backfill = backfill_ids - game_ids_set - existing_detail_ids
+            if new_backfill:
+                print(f"\n  发现 {len(new_backfill)} 场历史对局缺少详情，将一并补获取")
+            all_detail_ids = game_ids + sorted(new_backfill)
+
+            new_game_ids = [gid for gid in all_detail_ids if gid not in existing_detail_ids]
+            skipped = len(all_detail_ids) - len(new_game_ids)
+            if skipped:
+                print(f"\n正在获取 {len(new_game_ids)} 场对局详情（{skipped} 场已有，跳过）...")
+            else:
+                print(f"\n正在获取 {len(all_detail_ids)} 场对局详情...")
+            est_min = len(new_game_ids) * delay / 1000 / 60
             if est_min > 1:
                 print(f"  （预计约 {est_min:.0f} 分钟，延迟 {delay}ms）")
-            detail_data = fetch_battle_details(
-                client, game_ids, area=args.area, delay_ms=delay)
+            if new_game_ids:
+                detail_data = fetch_battle_details(
+                    client, new_game_ids, area=args.area, delay_ms=delay)
             if args.checkpoint:
                 _save_cp(cp_file, all_battles, detail_data)
 
     # ── 解析与导出 ──────────────────────────────────────────────────────
-    prefix = args.output_prefix or "wegame_matches"
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
 

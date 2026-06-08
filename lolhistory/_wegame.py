@@ -606,7 +606,7 @@ def fetch_battle_list(client: WegameApiClient, area: int = 1,
                 continue
             if existing_ids and gid in existing_ids:
                 has_known = True
-                continue
+                # 不跳过：该对局仍加入结果，确保后续详情阶段有机会获取
             if gid and gid not in seen_ids:
                 seen_ids.add(gid)
                 all_battles.append(b)

@@ -6,6 +6,7 @@ import os
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import unquote
 
 logger = logging.getLogger(__name__)
 
@@ -664,19 +665,35 @@ def _map_summary_to_row(s: dict) -> dict:
 
 def _map_detail_rows(game_id: str, players: list[dict], self_openid: str,
                      area: int = 1) -> list[dict]:
-    """将玩家详情字典列表映射为 SQLite 行数据列表。"""
+    """将玩家详情字典列表映射为 SQLite 行数据列表。
+
+    WeGame GetBattleDetail API 返回的 player_details 字段使用 camelCase 命名
+    （如 championsKilled, numDeaths, summonSpell1Id），此函数将其映射为
+    SQLite 的 snake_case 列名。
+    """
     rows = []
     for p in players:
         is_self = 1 if (self_openid and p.get("openid", "") == self_openid) else 0
-        kills = p.get("kills", 0) or 0
-        deaths = p.get("deaths", 0) or 0
+        kills = p.get("championsKilled", 0) or 0
+        deaths = p.get("numDeaths", 0) or 0
         assists = p.get("assists", 0) or 0
+
+        # 召唤师名称在 API 中是 URL-encoded
+        raw_name = p.get("name", "")
+        summoner_name = _decode_name(raw_name) if raw_name else ""
+
+        # teamId 在 API 中是字符串
+        team_id_raw = p.get("teamId", 0)
+        try:
+            team_id = int(team_id_raw)
+        except (ValueError, TypeError):
+            team_id = 0
 
         rows.append({
             "game_id": str(game_id),
-            "summoner_name": p.get("summoner_name", ""),
-            "champion_id": p.get("champion_id", 0) or 0,
-            "team_id": p.get("team_id", 0) or 0,
+            "summoner_name": summoner_name,
+            "champion_id": p.get("championId", 0) or 0,
+            "team_id": team_id,
             "win": 1 if p.get("win") == "Win" else 0,
             "kills": kills,
             "deaths": deaths,
@@ -689,20 +706,20 @@ def _map_detail_rows(game_id: str, players: list[dict], self_openid: str,
             "item4": p.get("item4", 0) or 0,
             "item5": p.get("item5", 0) or 0,
             "item6": p.get("item6", 0) or 0,
-            "spell1_id": p.get("spell1_id", 0) or 0,
-            "spell2_id": p.get("spell2_id", 0) or 0,
+            "spell1_id": p.get("summonSpell1Id", 0) or 0,
+            "spell2_id": p.get("summonSpell2Id", 0) or 0,
             "perk0": p.get("PERK0", 0) or 0,
             "perk1": p.get("PERK1", 0) or 0,
             "perk2": p.get("PERK2", 0) or 0,
             "perk3": p.get("PERK3", 0) or 0,
             "perk4": p.get("PERK4", 0) or 0,
             "perk5": p.get("PERK5", 0) or 0,
-            "total_damage": p.get("total_damage_dealt", 0) or 0,
-            "total_taken": p.get("total_damage_taken", 0) or 0,
-            "gold_earned": p.get("gold_earned", 0) or 0,
-            "minions_killed": p.get("minions_killed", 0) or 0,
-            "vision_score": p.get("vision_score", 0) or 0,
-            "cc_score": p.get("cc_score", 0) or 0,
+            "total_damage": p.get("totalDamageDealt", 0) or 0,
+            "total_taken": p.get("totalDamageTaken", 0) or 0,
+            "gold_earned": p.get("goldEarned", 0) or 0,
+            "minions_killed": p.get("minionsKilled", 0) or 0,
+            "vision_score": p.get("visionScore", 0) or 0,
+            "cc_score": p.get("timeCcingOthers", 0) or 0,
             "is_self": is_self,
             "area": area,
         })
@@ -835,6 +852,16 @@ def _map_career_overview_to_row(battle_count: dict, puin: str, fetched_at: str) 
         "total_clash_games": battle_count.get("clash总场", 0),
         "last_fetch_time": fetched_at,
     }
+
+
+def _decode_name(url_encoded: str) -> str:
+    """将 URL-encoded 的召唤师名称解码为可读字符串。"""
+    if not url_encoded:
+        return ""
+    try:
+        return unquote(url_encoded)
+    except Exception:
+        return url_encoded
 
 
 def _ts_to_iso(ts) -> str:
