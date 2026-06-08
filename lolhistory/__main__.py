@@ -345,11 +345,31 @@ def run_wegame(args) -> int:
     if cp_battles:
         all_battles = cp_battles
     else:
+        # 查询数据库中已有对局 ID，避免重复获取 API
+        prefix = args.output_prefix or "wegame_matches"
+        db_path = str(Path(args.output_dir) / f"{prefix}.db")
+        existing_ids = set()
+        if os.path.exists(db_path):
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            # 旧库升级：确保 area 列存在
+            try:
+                conn.execute("ALTER TABLE match_summary ADD COLUMN area INTEGER DEFAULT 1")
+            except sqlite3.OperationalError:
+                pass
+            rows = conn.execute(
+                "SELECT game_id FROM match_summary WHERE area = ?", (args.area,)
+            ).fetchall()
+            existing_ids = {r[0] for r in rows}
+            conn.close()
+            if existing_ids:
+                print(f"  数据库中已有 {len(existing_ids)} 条记录，将跳过重复获取")
+
         print(f"\n正在获取对局列表（最多 {args.max_games} 场）...")
         all_battles = fetch_battle_list(
             client, area=args.area, max_games=args.max_games,
             count_per_page=args.count_per_page, skip_tft=skip_tft,
-            delay_ms=delay,
+            delay_ms=delay, existing_ids=existing_ids or None,
         )
 
     total = len(all_battles)
@@ -403,7 +423,7 @@ def run_wegame(args) -> int:
     out.mkdir(parents=True, exist_ok=True)
 
     print(f"\n正在导出（格式: {args.fmt}）...")
-    parsed = [parse_battle_summary(b) for b in all_battles]
+    parsed = [parse_battle_summary(b, area=args.area) for b in all_battles]
     results = {}
 
     if args.fmt in ("csv", "both"):
@@ -470,7 +490,8 @@ def run_wegame(args) -> int:
                       summoner_career=summoner_career_data,
                       puin=client.puin,
                       champions=champions_data,
-                      battle_report=battle_report_data)
+                      battle_report=battle_report_data,
+                      area=args.area)
         results["sqlite"] = sp
 
     for fmt_name, filepath in results.items():

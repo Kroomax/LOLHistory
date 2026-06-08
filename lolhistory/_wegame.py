@@ -463,7 +463,7 @@ def parse_battle_report(data: dict) -> dict:
     }
 
 
-def parse_battle_summary(battle: dict) -> dict:
+def parse_battle_summary(battle: dict, area: int = 1) -> dict:
     """将 GetBattleList 返回的原始对局数据解析为扁平字典（中文键）。"""
     game_start_epoch = int(battle.get("game_start_time", "0")) / 1000.0
     game_duration = battle.get("game_time_played", 0) or 0
@@ -520,6 +520,7 @@ def parse_battle_summary(battle: dict) -> dict:
         "对局类型": battle.get("battle_type", 0) or 0,
         "组队人数": battle.get("team_made_size", 0) or 0,
         "游戏版本": battle.get("game_server_version", ""),
+        "大区": area,
     }
 
 
@@ -564,10 +565,12 @@ def parse_battle_detail(detail_data: dict, my_openid: str = "") -> dict:
 
 def fetch_battle_list(client: WegameApiClient, area: int = 1,
                       max_games: int = 50000, count_per_page: int = 10,
-                      skip_tft: bool = True, delay_ms: int = 200) -> list[dict]:
+                      skip_tft: bool = True, delay_ms: int = 200,
+                      existing_ids: set[str] | None = None) -> list[dict]:
     """通过 GetBattleList 分页获取全部可用对局历史。
 
     返回原始对局字典列表（按时间倒序，最新在前）。
+    若提供 existing_ids，遇到已入库对局时立即停止，避免重复获取。
     """
     all_battles = []
     seen_ids = set()
@@ -596,9 +599,13 @@ def fetch_battle_list(client: WegameApiClient, area: int = 1,
 
         empty_streak = 0
         new_count = 0
+        has_known = False
         for b in battles:
             gid = str(b.get("game_id", ""))
             if skip_tft and (b.get("game_queue_id", 0) or 0) in TFT_QUEUE_IDS:
+                continue
+            if existing_ids and gid in existing_ids:
+                has_known = True
                 continue
             if gid and gid not in seen_ids:
                 seen_ids.add(gid)
@@ -607,6 +614,11 @@ def fetch_battle_list(client: WegameApiClient, area: int = 1,
 
         sys.stderr.write(f"\r  已获取: {len(all_battles)} 场对局...")
         sys.stderr.flush()
+
+        if has_known:
+            logger.info("遇到已入库对局，停止获取（offset=%d，已获取 %d 场）",
+                        offset, len(all_battles))
+            break
 
         if len(all_battles) >= max_games:
             break

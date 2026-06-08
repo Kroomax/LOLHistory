@@ -21,7 +21,7 @@ CSV_FIELDNAMES = [
     "击杀最多", "助攻最多", "金币最多",
     "伤害最高", "承受伤害最高", "推塔最多",
     "段位", "胜点", "段位等级",
-    "对局类型", "组队人数", "游戏版本",
+    "对局类型", "组队人数", "游戏版本", "大区",
 ]
 
 
@@ -117,7 +117,8 @@ CREATE TABLE IF NOT EXISTS match_summary (
     tier            TEXT,
     league_points   INT,
     rank            TEXT,
-    game_version    TEXT
+    game_version    TEXT,
+    area            INTEGER DEFAULT 1
 )
 """
 
@@ -146,6 +147,7 @@ CREATE TABLE IF NOT EXISTS match_detail (
     vision_score    INT,
     cc_score        INT,
     is_self         INT,
+    area            INTEGER DEFAULT 1,
     FOREIGN KEY (game_id) REFERENCES match_summary(game_id)
 )
 """
@@ -559,7 +561,7 @@ SUMMARY_COLUMNS = [
     "was_mvp", "was_svp", "was_surrender", "was_afk",
     "most_kills", "most_assists", "most_gold", "most_damage",
     "most_taken", "most_turrets",
-    "tier", "league_points", "rank", "game_version",
+    "tier", "league_points", "rank", "game_version", "area",
 ]
 
 DETAIL_COLUMNS = [
@@ -569,7 +571,7 @@ DETAIL_COLUMNS = [
     "spell1_id", "spell2_id",
     "perk0", "perk1", "perk2", "perk3", "perk4", "perk5",
     "total_damage", "total_taken", "gold_earned",
-    "minions_killed", "vision_score", "cc_score", "is_self",
+    "minions_killed", "vision_score", "cc_score", "is_self", "area",
 ]
 
 SUMMONER_PROFILE_COLUMNS = [
@@ -656,10 +658,12 @@ def _map_summary_to_row(s: dict) -> dict:
         "league_points": s.get("胜点", 0) or 0,
         "rank": s.get("段位等级", ""),
         "game_version": s.get("游戏版本", ""),
+        "area": s.get("大区", 1) or 1,
     }
 
 
-def _map_detail_rows(game_id: str, players: list[dict], self_openid: str) -> list[dict]:
+def _map_detail_rows(game_id: str, players: list[dict], self_openid: str,
+                     area: int = 1) -> list[dict]:
     """将玩家详情字典列表映射为 SQLite 行数据列表。"""
     rows = []
     for p in players:
@@ -700,6 +704,7 @@ def _map_detail_rows(game_id: str, players: list[dict], self_openid: str) -> lis
             "vision_score": p.get("vision_score", 0) or 0,
             "cc_score": p.get("cc_score", 0) or 0,
             "is_self": is_self,
+            "area": area,
         })
     return rows
 
@@ -855,6 +860,7 @@ def export_sqlite(
     puin: str = "",
     champions: list[dict] | None = None,
     battle_report: dict | None = None,
+    area: int = 1,
 ) -> str:
     """将对局摘要、详情和召唤师数据导出到 SQLite 数据库。
 
@@ -888,21 +894,36 @@ def export_sqlite(
     db.execute(SQL_CREATE_SEASON_HISTORY)
     db.execute(SQL_CREATE_CAREER_OVERVIEW)
 
+    # 旧库升级：补充 area 列（v2 新增，旧数据均默认为大区1）
+    try:
+        db.execute("ALTER TABLE match_summary ADD COLUMN area INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        db.execute("ALTER TABLE match_detail ADD COLUMN area INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass
+
     # 清理旧表（v1 遗留，已不再使用）
     db.execute("DROP TABLE IF EXISTS champion_mastery_snapshot")
     db.execute("DROP TABLE IF EXISTS summoner_snapshot")
 
-    # 在 match_detail 上建立 (game_id, summoner_name) 唯一索引，
+    # 在 match_detail 上建立 (game_id, summoner_name, area) 唯一索引，
     # 便于重跑时通过 INSERT OR IGNORE 跳过已存在的玩家行。
+    # v2: 索引改为含 area，旧索引 idx_match_detail_game_player 不再适用 — 删除重建。
+    try:
+        db.execute("DROP INDEX IF EXISTS idx_match_detail_game_player")
+    except sqlite3.OperationalError:
+        pass
     try:
         db.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS "
-            "idx_match_detail_game_player "
-            "ON match_detail(game_id, summoner_name)"
+            "idx_match_detail_game_player_area "
+            "ON match_detail(game_id, summoner_name, area)"
         )
     except sqlite3.IntegrityError:
         logger.warning(
-            "无法在 match_detail(game_id, summoner_name) 上创建唯一索引 "
+            "无法在 match_detail(game_id, summoner_name, area) 上创建唯一索引 "
             "—— 检测到已有重复数据。新增重复数据将"
             "通过应用层过滤拦截。"
         )
@@ -921,13 +942,13 @@ def export_sqlite(
 
     # 写入对局详情（含去重）
     if details:
-        # 查询已有 (game_id, summoner_name) 对用于去重
-        existing_detail_pairs: set[tuple[str, str]] = set()
+        # 查询已有 (game_id, summoner_name, area) 对用于去重
+        existing_detail_pairs: set[tuple[str, str, int]] = set()
         try:
             rows = db.execute(
-                "SELECT game_id, summoner_name FROM match_detail"
+                "SELECT game_id, summoner_name, area FROM match_detail"
             ).fetchall()
-            existing_detail_pairs = {(r[0], r[1]) for r in rows}
+            existing_detail_pairs = {(r[0], r[1], r[2]) for r in rows}
         except sqlite3.OperationalError:
             pass  # 表可能尚不存在（理论上不会，但安全起见）
 
@@ -942,9 +963,9 @@ def export_sqlite(
         for gid_str, detail in details.items():
             players = detail.get("all_players", [])
             if players:
-                rows = _map_detail_rows(gid_str, players, self_openid)
+                rows = _map_detail_rows(gid_str, players, self_openid, area=area)
                 for r in rows:
-                    pair = (r["game_id"], r["summoner_name"])
+                    pair = (r["game_id"], r["summoner_name"], r["area"])
                     if pair in existing_detail_pairs:
                         skipped += 1
                         continue
