@@ -38,7 +38,15 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  # 第一步：从抓包文件提取 Cookie
+  # 准备工作：安装依赖 + 根证书（仅需一次）
+  pip install mitmproxy
+  python -m lolhistory --install-cert
+
+  # 第一步：一键抓包获取 Cookie（推荐）
+  python -m lolhistory --capture-cookies                     # 启动代理 -> 登录 WeGame -> 自动完成
+  python -m lolhistory --capture-cookies -c my_cookies.json   # 自定义输出文件名
+
+  # 备选方案：从抓包文件提取 Cookie
   python -m lolhistory --extract-cookies
   python -m lolhistory --extract-cookies ./my-exports -c my_cookies.json
 
