@@ -68,6 +68,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="从抓包导出文件中提取 WeGame Cookie。"
                          "扫描 DIR 目录（默认: wegame-api-export/）中最新的 "
                          "HAR/raw/curl 文件，提取后保存为 cookies.json 并退出。")
+    wg.add_argument("--capture-cookies", action="store_true",
+                    help="一键抓包提取 WeGame Cookie。"
+                         "首次使用前需 --install-cert 安装根证书。")
+    wg.add_argument("--install-cert", action="store_true",
+                    help="安装 mitmproxy 根证书到用户信任存储（无需管理员，仅需一次）")
     wg.add_argument("--puin", help="WeGame puin cookie")
     wg.add_argument("--pkey", help="WeGame pkey cookie")
     wg.add_argument("--tgp-biz-ticket", help="WeGame tgp_biz_ticket cookie")
@@ -225,7 +230,7 @@ def run_wegame(args) -> int:
         print("  1. Cookie 是否有效（未过期）", file=sys.stderr)
         print("  2. 网络连接是否正常", file=sys.stderr)
         return 1
-    print("  [✓] 连接成功")
+    print("  [OK] 连接成功")
 
     # ── 自动获取召唤师信息与生涯统计 ─────────────────────────────────
     # 在获取对局列表之前自动执行，无需用户管理。
@@ -504,10 +509,95 @@ def run_extract_cookies(args) -> int:
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# Cookie 一键抓包（mitmproxy 内嵌）
+# ──────────────────────────────────────────────────────────────────────────
+
+def _is_admin() -> bool:
+    """检查是否以管理员权限运行。"""
+    try:
+        import ctypes
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except Exception:
+        return False
+
+
+def _elevate() -> int:
+    """以管理员权限重新启动当前进程。
+
+    使用 ShellExecute runas 触发 UAC 提权，在新窗口中运行相同命令。
+    当前进程随即退出，返回 0。
+    """
+    import subprocess
+    import ctypes
+    import os
+
+    # 构建命令行参数（不包含 exe 本身，ShellExecute 的 file 参数已指定）
+    params = subprocess.list2cmdline(["-m", "lolhistory"] + sys.argv[1:])
+
+    ctypes.windll.shell32.ShellExecuteW(
+        None,              # hwnd
+        "runas",           # 提权动词
+        sys.executable,    # 可执行文件
+        params,            # 参数（不含 exe 名）
+        os.getcwd(),       # 工作目录（保持项目根目录）
+        1,                 # SW_SHOWNORMAL
+    )
+    return 0
+
+
+def run_capture_cookies(args) -> int:
+    """启动 mitmproxy 内嵌抓包，自动提取 WeGame Cookie 并退出。"""
+    from ._capture_cookies import run_capture
+
+    output_file = args.cookies or "cookies.json"
+
+    try:
+        cookies = run_capture(output=output_file)
+    except ImportError as e:
+        print(f"\n[错误] 缺少依赖: {e}", file=sys.stderr)
+        print("  请运行: pip install mitmproxy", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"\n[错误] 抓包失败: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        return 1
+
+    if not cookies:
+        return 1
+
+    print(f"\n下一步: python -m lolhistory --cookies {output_file}")
+    return 0
+
+
+def run_install_cert(args) -> int:
+    """安装 mitmproxy 根证书并退出。"""
+    from ._capture_cookies import install_cert
+
+    print("=" * 60)
+    print("  LOLhistory — 根证书安装")
+    print("=" * 60)
+    print()
+
+    result = install_cert()
+    if result:
+        print()
+        print("下一步: python -m lolhistory --capture-cookies")
+        return 0
+    else:
+        return 1
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # 主入口
 # ──────────────────────────────────────────────────────────────────────────
 
 def main(argv: list[str] | None = None) -> int:
+    # 修复 Windows GBK 终端编码问题
+    import io
+    if hasattr(sys.stdout, 'buffer'):
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -518,7 +608,15 @@ def main(argv: list[str] | None = None) -> int:
         datefmt="%H:%M:%S",
     )
 
-    # Cookie 提取模式（不调用 API — 仅提取并退出）
+    # 根证书安装模式
+    if args.install_cert:
+        return run_install_cert(args)
+
+    # Cookie 一键抓包模式（mitmproxy 内嵌）
+    if args.capture_cookies:
+        return run_capture_cookies(args)
+
+    # Cookie 提取模式（从抓包导出文件提取，不调用 API — 仅提取并退出）
     if args.extract_cookies is not None:
         return run_extract_cookies(args)
 

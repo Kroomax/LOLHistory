@@ -5,9 +5,14 @@
 ## 运行命令
 
 ```bash
-.venv/Scripts/pip install -r requirements.txt   # 唯一依赖: requests
+.venv/Scripts/pip install -r requirements.txt   # requests + mitmproxy
 
-# 获取 Cookie（从 Fiddler/Charles 抓包导出文件中提取）
+# 获取 Cookie — 一键抓包（推荐，无需手动操作抓包工具）
+.venv/Scripts/python -m lolhistory --install-cert                       # 安装 mitmproxy 根证书（仅需一次）
+.venv/Scripts/python -m lolhistory --capture-cookies                     # 一键抓包，登录 WeGame 即完成
+.venv/Scripts/python -m lolhistory --capture-cookies -c cookies.json     # 自定义输出文件名
+
+# 获取 Cookie — 从抓包导出文件提取（备选方案）
 .venv/Scripts/python -m lolhistory --extract-cookies                    # 扫描 wegame-api-export/
 .venv/Scripts/python -m lolhistory --extract-cookies ./my-exports       # 自定义目录
 .venv/Scripts/python -m lolhistory --extract-cookies -c cookies.json    # 指定输出文件名
@@ -26,14 +31,15 @@
 
 ## 架构
 
-MVP 结构，6 个模块各司其职：
+MVP 结构，7 个模块各司其职：
 
 | 文件 | 用途 |
 |------|------|
 | `__main__.py` | CLI（argparse）+ WeGame 流程编排（含自动获取召唤师/英雄熟练度/赛季报告/生涯统计） |
 | `_data.py` | 共享常量：`QUEUE_NAMES`(96)、`MAP_NAMES`(17)、`TFT_QUEUE_IDS`、`WEGAME_TIER_NAMES`(9)、工具函数 |
 | `_wegame.py` | WeGame API：Cookie 认证 → WegameApiClient → 6 个 API 端点 + 6 个解析函数 |
-| `_cookie_extract.py` | WeGame Cookie 获取：从 Fiddler/Charles 导出的 HAR/raw/curl 文件中提取 cookie |
+| `_capture_cookies.py` | Cookie 一键抓包：内嵌 mitmproxy HTTP 代理，登录 WeGame 即自动提取 |
+| `_cookie_extract.py` | Cookie 文件提取：从 Fiddler/Charles 导出的 HAR/raw/curl 文件中提取 cookie |
 | `_export.py` | 导出：CSV（UTF-8 BOM）+ SQLite（6 张表） |
 | `_analysis.py` | 数据分析：从 SQLite 读取 → 30+ 维度分析 → 生成单个交互式 HTML 报告（6 章，~30 图表） |
 
@@ -70,15 +76,19 @@ Cookie（与 WeGame 助手页共享 session），必需 4 个：`puin`, `pkey`, 
 
 **获取方式：**
 
-1. `python -m lolhistory --extract-cookies` — 从抓包导出文件自动提取（最简单）
+1. `python -m lolhistory --capture-cookies` — **一键抓包（推荐）**
+   - 内嵌 mitmproxy HTTP 代理 + Windows 系统代理
+   - 首次使用需 `--install-cert` 安装根证书（仅需一次，certutil -user 无需管理员）
+   - 代理启动后登录 WeGame 即自动捕获 Cookie → 保存 `cookies.json`
+   - WeGame QBCore 使用**逗号**分隔 Cookie（非标准 `;`），解析函数已兼容
+
+2. `python -m lolhistory --extract-cookies` — 从抓包导出文件提取（备选）
    - Fiddler: 右键请求 → Export → Raw Files（.txt），放入 `wegame-api-export/`
    - Charles: 右键请求 → Export → HAR（.har），放入 `wegame-api-export/`
    - 浏览器: DevTools → Network → 右键请求 → Copy as cURL，粘贴到 .txt 文件
    - 工具自动扫描目录 → 提取最新文件的 cookie → 保存 `cookies.json`
 
-2. Fiddler/Charles 手动抓包 `www.wegame.com.cn` 的 Cookie 请求头，手写 JSON `{"puin":"...", "pkey":"...", ...}`
-
-3. （可选）`python wegame_cookie_helper.py --scan` — 从 WeGame.exe 进程内存提取
+3. Fiddler/Charles 手动抓包 `www.wegame.com.cn` 的 Cookie 请求头，手写 JSON `{"puin":"...", "pkey":"...", ...}`
 
 ### 已知限制
 

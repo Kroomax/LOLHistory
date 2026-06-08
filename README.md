@@ -37,7 +37,8 @@ League 客户端只展示最近 20 场。WeGame 助手虽然能看到更多，�
 | | |
 |---|---|
 | 🔌 **WeGame API** | 无需客户端，最大 500 场 + 段位历史 + 装备符文 + 10 人详情 |
-| 🍪 **智能 Cookie 提取** | 丢一个 Fiddler/Charles/浏览器 抓包文件进去，自动识别 HAR、Raw、cURL、Charles 四种格式 |
+| 🍪 **一键抓包** | `--capture-cookies` 自动启动代理，登录 WeGame 即获取 Cookie——告别 Fiddler/Charles 手动操作 |
+| 📁 **智能 Cookie 提取** | 也支持从 Fiddler/Charles/浏览器 抓包文件中自动提取，兼容 HAR、Raw、cURL、Charles 四种格式 |
 | 📊 **三种导出格式** | CSV（UTF-8 BOM，Excel 即开）+ SQLite（35 列 summary + 31 列 detail）+ JSON（完整原始数据） |
 | 🔄 **增量合并** | 重复运行自动去重追加——只拉新对局，不覆盖旧数据 |
 | 💾 **断点续传** | 拉 500 场详情要几分钟，中断后从断点恢复，不用重来 |
@@ -70,7 +71,24 @@ pip install -r requirements.txt   # 唯一依赖：requests
 
 ### 2. 获取 Cookie
 
-打开 WeGame → 启动英雄联盟 → 点击「WeGame 助手」→ 对局记录页面。此时用抓包工具导出 **任意一个** `www.wegame.com.cn` 的 HTTPS 请求：
+**🆕 一键抓包（推荐，无需任何手动操作）**
+
+```bash
+# 首次使用：安装 mitmproxy 根证书（仅需一次，无需管理员）
+python -m lolhistory --install-cert
+
+# 一键抓包：代理自动启动 → 登录 WeGame → Cookie 自动保存
+python -m lolhistory --capture-cookies
+```
+
+登录 WeGame 即自动完成！Cookie 保存为 `cookies.json`，随后直接使用。
+
+> **原理**：内嵌 mitmproxy HTTP 代理 + Windows 系统代理，自动拦截 WeGame 登录时的认证请求。无需打开助手页/对局记录页，无需任何抓包工具。
+
+<details>
+<summary><strong>备选方案：从抓包文件提取（点此展开）</strong></summary>
+
+打开 WeGame → 点击「WeGame 助手」→ 对局记录页面。用抓包工具导出 **任意一个** `www.wegame.com.cn` 的 HTTPS 请求：
 
 | 工具 | 操作 |
 |---|---|
@@ -78,13 +96,15 @@ pip install -r requirements.txt   # 唯一依赖：requests
 | **Charles** | 右键请求 → Export → HAR，放入 `wegame-api-export/` |
 | **浏览器 DevTools** | Network → 右键请求 → Copy as cURL → 粘贴到 `.txt` 文件 |
 
-然后一行命令提取：
+然后提取：
 
 ```bash
 python -m lolhistory --extract-cookies
 ```
 
-自动扫描目录、识别格式、提取并保存 `cookies.json`。输出示例：
+</details>
+
+输出示例：
 
 ```json
 {
@@ -95,7 +115,7 @@ python -m lolhistory --extract-cookies
 }
 ```
 
-> 💡 **Cookie 有效期**：与 WeGame 助手页共享 session，通常管几小时到一天。过期后重新抓一次即可。
+> 💡 **Cookie 有效期**：与 WeGame 助手页共享 session，通常管几小时到一天。过期后重新运行 `--capture-cookies` 即可。
 
 ### 3. 拉数据！
 
@@ -242,11 +262,12 @@ WeGame API 服务端限制，<code>offset ≥ 500</code> 直接返回空。这�
 lolhistory/
 ├── __main__.py             # CLI 入口 + 参数解析 + WeGame 流程编排
 ├── _wegame.py              # WeGame API：Cookie 认证 · 分页 · 详情 · 解析
-├── _cookie_extract.py      # Cookie 自动提取：HAR / Raw / cURL / Charles 四种格式
+├── _capture_cookies.py     # Cookie 一键抓包：mitmproxy 内嵌 · 系统代理 · 自动捕获
+├── _cookie_extract.py      # Cookie 文件提取：HAR / Raw / cURL / Charles 四种格式
 ├── _export.py              # 导出引擎：CSV (UTF-8 BOM) + SQLite (六表) + 增量去重
 ├── _data.py                # 共享常量：96 队列 + 17 地图名称映射 + TFT 过滤列表
 ├── _analysis.py            # 数据分析：30+ 维度 → 交互式 HTML 报告
-└── requirements.txt        # 单一依赖：requests
+└── requirements.txt        # 依赖：requests + mitmproxy
 archive/
 └── _lcu.py                 # [已弃用] LCU API 实现，保留作为技术参考
 ```
