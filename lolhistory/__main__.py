@@ -80,8 +80,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ── 输出 ─────────────────────────────────────────────────────────────
     out = p.add_argument_group("输出")
-    out.add_argument("-f", "--format", dest="fmt", choices=["json", "csv", "both"],
-                     default="both", help="导出格式（默认: both）")
+    out.add_argument("--no-csv", action="store_true",
+                     help="跳过 CSV 导出（仅导出 SQLite）")
     out.add_argument("-o", "--output-dir", default=".",
                      help="输出目录（默认: 当前目录）")
     out.add_argument("--output-prefix", default=None,
@@ -465,64 +465,14 @@ def run_wegame(args) -> int:
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    print(f"\n正在导出（格式: {args.fmt}）...")
+    print(f"\n正在导出...")
     parsed = [parse_battle_summary(b, area=args.area) for b in all_battles]
     results = {}
 
-    if args.fmt in ("csv", "both"):
+    if not args.no_csv:
         cp = str(out / f"{prefix}.csv")
         export_csv(parsed, cp)
         results["csv"] = cp
-
-    if args.fmt in ("json", "both"):
-        import json as _json
-        jp = str(out / f"{prefix}.json")
-
-        # ── 读取已有 JSON 进行合并 ──────────────────────────────────────
-        existing_battles = []
-        existing_details = {}
-        existing_ids = set()
-        try:
-            with open(jp, "r", encoding="utf-8") as f:
-                prev = _json.load(f)
-            existing_battles = prev.get("battles", [])
-            existing_details = prev.get("detailed_matches", {})
-            existing_ids = {str(b.get("game_id", "")) for b in existing_battles}
-            logger.info("JSON 已有: %d 场对局, %d 条详情",
-                        len(existing_battles), len(existing_details))
-        except FileNotFoundError:
-            logger.info("JSON 新文件: %s", jp)
-        except (_json.JSONDecodeError, OSError, KeyError):
-            logger.warning("JSON 读取失败，将覆盖: %s", jp, exc_info=True)
-
-        # ── 过滤新对局并合并详情 ──────────────────────────────────────────
-        new_battles = [b for b in all_battles
-                       if str(b.get("game_id", "")) not in existing_ids]
-        merged_battles = existing_battles + new_battles
-
-        # 详情: 保留已有，仅添加新键
-        merged_details = dict(existing_details)
-        if detail_data:
-            for k, v in detail_data.items():
-                if str(k) not in merged_details:
-                    merged_details[str(k)] = v
-
-        export = {
-            "export_info": {
-                "exported_at": datetime.now().isoformat(),
-                "source": "WeGame API",
-                "puin": client.puin,
-                "total_matches": len(merged_battles),
-            },
-            "battles": merged_battles,
-        }
-        if merged_details:
-            export["detailed_matches"] = merged_details
-        with open(jp, "w", encoding="utf-8") as f:
-            _json.dump(export, f, ensure_ascii=False, indent=2, default=str)
-        results["json"] = jp
-        logger.info("JSON 已导出: %d 场对局（%d 已有 + %d 新增）",
-                    len(merged_battles), len(existing_battles), len(new_battles))
 
     # SQLite 导出（默认总是执行，除非 --no-sqlite）
     if not args.no_sqlite:

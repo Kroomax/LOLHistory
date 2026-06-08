@@ -113,12 +113,11 @@ python -m lolhistory --cookies cookies.json --detail-game GAME_ID
 python -m lolhistory --cookies cookies.json --area 1
 ```
 
-跑完在当前目录生成三个文件：
+跑完在当前目录生成两个文件：
 
 ```
 wegame_matches.csv    ← Excel 拖进去就能看，35 列中文表头
-wegame_matches.db     ← SQLite，match_summary + match_detail 两张表
-wegame_matches.json   ← 完整原始数据（含 10 人详情）
+wegame_matches.db     ← SQLite，6 张表（对局摘要 + 10 人详情 + 召唤师资料 + 英雄熟练度 + 赛季历史 + 生涯总览）
 ```
 
 ---
@@ -134,11 +133,11 @@ wegame_matches.json   ← 完整原始数据（含 10 人详情）
 | `--detailed` | 逐场拉取 10 人完整详情（装备/符文/ban） |
 | `--detail-game ID` | 查单场详情并在终端打印 |
 | `--area N` | 大区 ID（1=艾欧尼亚，2=比尔吉沃特…） |
-| `-f json/csv/both` | 导出格式（默认 both） |
 | `-o ./output` | 输出目录 |
 | `--output-prefix NAME` | 自定义文件名前缀 |
 | `--checkpoint` | 启用断点续传 |
-| `--no-sqlite` | 只导出 CSV |
+| `--no-csv` | 跳过 CSV 导出（仅导出 SQLite） |
+| `--no-sqlite` | 跳过 SQLite 导出（仅导出 CSV） |
 | `--include-tft` | 包含云顶之弈对局 |
 
 Cookie 还可以直接从命令行传入（无需文件）：
