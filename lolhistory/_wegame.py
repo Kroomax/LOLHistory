@@ -623,23 +623,53 @@ def fetch_battle_list(client: WegameApiClient, area: int = 1,
 
 
 def fetch_battle_details(client: WegameApiClient, game_ids: list[str],
-                          area: int = 1, delay_ms: int = 200) -> dict[str, dict]:
+                          area: int = 1, delay_ms: int = 200,
+                          max_retries: int = 3,
+                          retry_delay: float = 3.0) -> dict[str, dict]:
     """通过 GetBattleDetail 批量获取对局详情。
 
     返回字典，键为 game_id，值为解析后的详情字典。
+
+    Args:
+        max_retries: 单局失败后的最大重试次数（默认 3 次）。
+        retry_delay: 重试前的等待秒数基数，实际延迟为该值的 (attempt+1) 倍
+                     （逐次递增退避，如 3s → 6s → 9s）。
     """
     details = {}
     total = len(game_ids)
+    retry_stats = {"total": 0, "recovered": 0}
     for i, gid in enumerate(game_ids, 1):
-        try:
-            data = client.get_battle_detail(gid, area=area)
-            details[str(gid)] = parse_battle_detail(data, client.openid or "")
-        except WegameApiError as e:
-            logger.warning("详情获取失败 %s: %s", gid, e)
-            details[str(gid)] = {"error": str(e), "game_id": str(gid)}
-        except Exception as e:
-            logger.warning("意外错误 %s: %s", gid, e)
-            details[str(gid)] = {"error": str(e), "game_id": str(gid)}
+        # ── 带退避重试的详情获取 ──────────────────────────────────────
+        last_error = None
+        for attempt in range(max_retries + 1):  # 0..max_retries（0=首次尝试）
+            try:
+                data = client.get_battle_detail(gid, area=area)
+                details[str(gid)] = parse_battle_detail(data, client.openid or "")
+                if attempt > 0:
+                    retry_stats["recovered"] += 1
+                    logger.info("重试成功 %s (第%d次重试)", gid, attempt)
+                last_error = None
+                break
+            except WegameApiError as e:
+                last_error = e
+                if attempt < max_retries:
+                    wait = retry_delay * (attempt + 1)
+                    logger.debug("详情获取失败 %s (尝试 %d/%d): %s — %ds后重试...",
+                                 gid, attempt + 1, max_retries + 1, e, wait)
+                    time.sleep(wait)
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries:
+                    wait = retry_delay * (attempt + 1)
+                    logger.debug("意外错误 %s (尝试 %d/%d): %s — %ds后重试...",
+                                 gid, attempt + 1, max_retries + 1, e, wait)
+                    time.sleep(wait)
+
+        if last_error:
+            retry_stats["total"] += 1
+            logger.warning("详情获取失败 %s (已重试%d次): %s",
+                           gid, max_retries, last_error)
+            details[str(gid)] = {"error": str(last_error), "game_id": str(gid)}
 
         sys.stderr.write(f"\r  获取详情: {i}/{total}...")
         sys.stderr.flush()
@@ -647,6 +677,9 @@ def fetch_battle_details(client: WegameApiClient, game_ids: list[str],
             time.sleep(delay_ms / 1000.0)
 
     sys.stderr.write("\n")
+    if retry_stats["total"]:
+        logger.info("详情获取统计: 失败%d局, 重试恢复%d局",
+                    retry_stats["total"], retry_stats["recovered"])
     return details
 
 
