@@ -349,7 +349,7 @@ class LOLHistoryApp:
         self._step_labels: list[tk.Label] = []
         self._step_connectors: list[tk.Label] = []
 
-        step_names = ["① 欢迎", "② Cookie", "③ 拉取数据", "④ 完成"]
+        step_names = ["① 欢迎", "② 获取凭据", "③ 拉取数据", "④ 完成"]
         for i, name in enumerate(step_names):
             if i > 0:
                 conn = tk.Label(steps_frame, text=" ─ ", font=FONT_SMALL,
@@ -490,7 +490,7 @@ class LOLHistoryApp:
         elif stage == 3:
             # 完成页: 仅保留重新拉取按钮（打开报告/文件夹在页面内）
             tk.Button(
-                self._footer_left, text="🔄 重新拉取", font=FONT_BTN_SM,
+                self._footer_left, text="🔄 重新获取数据", font=FONT_BTN_SM,
                 bg=THEME["card"], fg=THEME["text"], activebackground=THEME["hover"],
                 activeforeground=THEME["text"], relief="flat",
                 padx=16, pady=8, cursor="hand2", borderwidth=0,
@@ -547,7 +547,7 @@ class LOLHistoryApp:
                       bg=THEME["card"], fg=THEME["text2"]).pack(pady=(2, 0))
 
         # 准备清单
-        prep = tk.Label(center, text="需要准备：WeGame 账号 + 2 分钟时间  |  全程无需命令行，点点按钮即可完成",
+        prep = tk.Label(center, text="需要：WeGame 账号 + 2 分钟  |  数据仅保存在本地，不上传任何服务器",
                          font=FONT_SMALL, bg=THEME["bg"], fg=THEME["text3"])
         prep.pack()
 
@@ -561,22 +561,22 @@ class LOLHistoryApp:
         page = tk.Frame(self._content, bg=THEME["bg"])
 
         # 标题
-        stage_title = tk.Label(page, text="获取 WeGame Cookie", font=FONT_H1,
+        stage_title = tk.Label(page, text="获取 WeGame 登录凭据", font=FONT_H1,
                                 bg=THEME["bg"], fg=THEME["gold"])
         stage_title.pack(anchor="w", pady=(0, 4))
 
-        stage_sub = tk.Label(page, text="Cookie 用于访问你的对局数据，仅保存在本地，不会上传到任何服务器",
+        stage_sub = tk.Label(page, text="登录凭据用于读取你的对局数据，仅保存在本机，不会上传到任何服务器",
                               font=FONT_SMALL, bg=THEME["bg"], fg=THEME["text2"])
-        stage_sub.pack(anchor="w", pady=(0, 16))
+        stage_sub.pack(anchor="w", pady=(0, 10))
 
         # ── 方式一：一键抓包（推荐）──────────────────────────────────────────
         self._capture_card = tk.Frame(page, bg=THEME["card"],
                                        highlightbackground=THEME["gold"],
                                        highlightthickness=1)
-        self._capture_card.pack(fill="x", pady=(0, 10))
+        self._capture_card.pack(fill="x", pady=(0, 6))
 
         cap_inner = tk.Frame(self._capture_card, bg=THEME["card"])
-        cap_inner.pack(fill="both", expand=True, padx=20, pady=16)
+        cap_inner.pack(fill="both", expand=True, padx=20, pady=10)
 
         cap_header = tk.Frame(cap_inner, bg=THEME["card"])
         cap_header.pack(fill="x")
@@ -587,30 +587,30 @@ class LOLHistoryApp:
                   font=FONT_SMALL, bg=THEME["card"], fg=THEME["text3"]).pack(side="left", padx=(10, 0))
 
         cap_steps = [
-            "1. 首次使用需先点击下方「安装根证书」（仅需一次，无需管理员权限）",
+            "1. 首次使用需先点击下方「安装 HTTPS 证书」（仅需一次，无需管理员）",
             "2. 点击「开始抓包」→ 等待引擎启动（约 3 秒）",
-            "3. 看到「抓包引擎已准备就绪」提示后，打开并登录 WeGame",
-            "4. 登录成功后 Cookie 自动捕获，无需任何额外操作",
+            "3. 看到「代理引擎已就绪」提示后，打开并登录 WeGame",
+            "4. 登录成功后凭据自动获取，无需任何额外操作",
         ]
         for step in cap_steps:
             tk.Label(cap_inner, text=step, font=FONT_BODY,
-                      bg=THEME["card"], fg=THEME["text2"]).pack(anchor="w", pady=(6, 0))
+                      bg=THEME["card"], fg=THEME["text2"]).pack(anchor="w", pady=(3, 0))
 
         # ── 根证书状态 ───────────────────────────────────────────────────
         cert_frame = tk.Frame(cap_inner, bg=THEME["card"])
-        cert_frame.pack(fill="x", pady=(10, 4))
+        cert_frame.pack(fill="x", pady=(6, 2))
 
         self._cert_status_icon = tk.Label(cert_frame, text="", font=FONT_BODY,
                                           bg=THEME["card"], fg=THEME["text2"])
         self._cert_status_icon.pack(side="left")
 
-        self._cert_status_text = tk.Label(cert_frame, text="正在检测根证书...",
+        self._cert_status_text = tk.Label(cert_frame, text="正在检测 HTTPS 证书...",
                                           font=FONT_SMALL, bg=THEME["card"],
                                           fg=THEME["text2"])
         self._cert_status_text.pack(side="left", padx=(4, 12))
 
         self._btn_install_cert = tk.Button(
-            cert_frame, text="🔒 安装根证书", font=FONT_SMALL,
+            cert_frame, text="🔒 安装 HTTPS 证书（仅需一次）", font=FONT_SMALL,
             bg=THEME["card2"], fg=THEME["blue2"], activebackground=THEME["hover"],
             activeforeground=THEME["blue"], relief="flat",
             padx=12, pady=4, cursor="hand2", borderwidth=1,
@@ -621,7 +621,7 @@ class LOLHistoryApp:
         self._capture_status = tk.Label(cap_inner, text="",
                                          font=("Microsoft YaHei", 10, "bold"),
                                          bg=THEME["card"], fg=THEME["green"])
-        self._capture_status.pack(anchor="w", pady=(8, 8))
+        self._capture_status.pack(anchor="w", pady=(4, 4))
 
         btn_row = tk.Frame(cap_inner, bg=THEME["card"])
         btn_row.pack(fill="x")
@@ -634,17 +634,6 @@ class LOLHistoryApp:
             command=self._run_capture)
         self._btn_capture.pack(side="left")
 
-        # ── 分隔线 ──────────────────────────────────────────────────────────
-        sep_frame = tk.Frame(page, bg=THEME["bg"], height=24)
-        sep_frame.pack(fill="x")
-        tk.Frame(sep_frame, bg=THEME["border"], height=1).place(
-            relx=0, rely=0.5, relwidth=0.43, anchor="w")
-        tk.Label(sep_frame, text="或者", font=FONT_SMALL,
-                  bg=THEME["bg"], fg=THEME["text3"]).place(
-            relx=0.5, rely=0.5, anchor="center")
-        tk.Frame(sep_frame, bg=THEME["border"], height=1).place(
-            relx=0.58, rely=0.5, relwidth=0.42, anchor="w")
-
         # ── 方式二：选择已有文件 / 手动填入 ─────────────────────────────────
         self._manual_card = tk.Frame(page, bg=THEME["card"],
                                       highlightbackground=THEME["border"],
@@ -652,17 +641,17 @@ class LOLHistoryApp:
         self._manual_card.pack(fill="x")
 
         man_inner = tk.Frame(self._manual_card, bg=THEME["card"])
-        man_inner.pack(fill="both", expand=True, padx=20, pady=16)
+        man_inner.pack(fill="both", expand=True, padx=20, pady=10)
 
-        tk.Label(man_inner, text="方式二：选择 Cookie 文件或手动填入",
+        tk.Label(man_inner, text="方式二：选择凭据文件或手动填入",
                   font=("Microsoft YaHei", 13, "bold"),
                   bg=THEME["card"], fg=THEME["text"]).pack(anchor="w")
 
         # 选择文件按钮
         file_row = tk.Frame(man_inner, bg=THEME["card"])
-        file_row.pack(fill="x", pady=(10, 4))
+        file_row.pack(fill="x", pady=(6, 2))
 
-        tk.Button(file_row, text="📂 选择 cookies.json 文件", font=FONT_BTN_SM,
+        tk.Button(file_row, text="📂 选择凭据文件（cookies.json）", font=FONT_BTN_SM,
                    bg=THEME["card2"], fg=THEME["blue2"], activebackground=THEME["hover"],
                    activeforeground=THEME["blue"], relief="flat",
                    padx=14, pady=6, cursor="hand2", borderwidth=1,
@@ -675,15 +664,15 @@ class LOLHistoryApp:
         # 如果有已保存的 Cookie，显示提示
         if self._saved_cookies:
             saved_info = tk.Label(man_inner,
-                                   text=f"💾 检测到已保存的 Cookie（上次使用: {list(self._saved_cookies.keys())}），可直接下一步",
+                                   text=f"💾 检测到已保存的登录凭据（可直接下一步）",
                                    font=FONT_SMALL, bg=THEME["card"], fg=THEME["gold_dim"])
             saved_info.pack(anchor="w", pady=(6, 0))
 
         # 手动输入区域（可折叠）
-        self._manual_toggle = tk.Label(man_inner, text="▸ 手动输入 Cookie 值",
+        self._manual_toggle = tk.Label(man_inner, text="▸ 手动填写凭据（高级）",
                                         font=FONT_SMALL, bg=THEME["card"],
                                         fg=THEME["text3"], cursor="hand2")
-        self._manual_toggle.pack(anchor="w", pady=(8, 0))
+        self._manual_toggle.pack(anchor="w", pady=(4, 0))
         self._manual_toggle.bind("<Button-1>", self._toggle_manual_input)
 
         self._manual_frame = tk.Frame(man_inner, bg=THEME["card"])
@@ -724,7 +713,7 @@ class LOLHistoryApp:
         curl_frame = tk.Frame(self._manual_frame, bg=THEME["card"])
         curl_frame.pack(fill="x", pady=(8, 0))
 
-        tk.Label(curl_frame, text="或粘贴 cURL:", font=FONT_SMALL,
+        tk.Label(curl_frame, text="或粘贴 cURL 请求（从浏览器复制）：", font=FONT_SMALL,
                   bg=THEME["card"], fg=THEME["text3"]).pack(anchor="w")
 
         self._curl_text = tk.Text(curl_frame, font=FONT_MONO, bg=THEME["input_bg"],
@@ -742,10 +731,10 @@ class LOLHistoryApp:
     def _toggle_manual_input(self, event=None):
         if self._manual_frame.winfo_ismapped():
             self._manual_frame.pack_forget()
-            self._manual_toggle.configure(text="▸ 手动输入 Cookie 值")
+            self._manual_toggle.configure(text="▸ 手动填写凭据（高级）")
         else:
             self._manual_frame.pack(fill="x", pady=(0, 4))
-            self._manual_toggle.configure(text="▾ 手动输入 Cookie 值")
+            self._manual_toggle.configure(text="▾ 手动填写凭据（高级）")
 
     def _on_entry_focus(self, event, placeholder: str):
         entry: tk.Entry = event.widget
@@ -778,7 +767,7 @@ class LOLHistoryApp:
         if "curl" not in text.lower():
             return
 
-        self._curl_status.configure(text="正在解析 cURL...", fg=THEME["orange"])
+        self._curl_status.configure(text="正在解析凭据...", fg=THEME["orange"])
 
         try:
             # 临时写入文件，使用现有函数解析
@@ -796,10 +785,10 @@ class LOLHistoryApp:
             if cookies:
                 self._fill_cookie_fields(cookies)
                 self._curl_status.configure(
-                    text=f"✅ 成功解析 {len(cookies)}/4 项 Cookie", fg=THEME["green"])
+                    text=f"✅ 已解析 {len(cookies)}/4 项凭据", fg=THEME["green"])
             else:
                 self._curl_status.configure(
-                    text="⚠ 未能解析到 WeGame Cookie，请确认 cURL 中包含 www.wegame.com.cn 的请求",
+                    text="⚠ 未能解析到凭据，请确认复制的是 www.wegame.com.cn 的请求",
                     fg=THEME["orange"])
         except Exception as e:
             self._curl_status.configure(text=f"❌ 解析失败: {e}", fg=THEME["red"])
@@ -828,7 +817,7 @@ class LOLHistoryApp:
             self._btn_primary.configure(state="normal", text="连接并拉取数据 →")
         else:
             self._btn_primary.configure(state="disabled",
-                                         text=f"还需 {4 - len(cookies)} 项 Cookie")
+                                         text=f"还需 {4 - len(cookies)} 项凭据")
 
     def _collect_cookies(self) -> dict:
         """从各种来源收集 Cookie。"""
@@ -855,7 +844,7 @@ class LOLHistoryApp:
     def _select_cookie_file(self):
         """打开文件选择对话框。"""
         path = filedialog.askopenfilename(
-            title="选择 Cookie 文件",
+            title="选择凭据文件",
             filetypes=[("JSON 文件", "*.json"), ("所有文件", "*.*")],
         )
         if not path:
@@ -881,14 +870,14 @@ class LOLHistoryApp:
             # 证书文件不存在，阻止抓包并提示用户先安装
             self._update_cert_status_ui(cert_status)
             self._capture_status.configure(
-                text="⚠ 根证书尚未生成，请先点击上方「生成并安装根证书」按钮（仅需一次，约 5 秒）",
+                text="⚠ 请先点击上方「安装 HTTPS 证书」按钮（仅需一次）",
                 fg=THEME["orange"])
             return
         elif cert_status == "exists":
             # 证书存在但未安装 — 刷新 UI 提示，但不阻止（用户可自行决定）
             self._update_cert_status_ui(cert_status)
             self._capture_status.configure(
-                text="⚠ 根证书尚未安装，建议先安装后再抓包（仍可尝试继续）",
+                text="⚠ HTTPS 证书尚未安装（仍可尝试抓包，但可能失败）",
                 fg=THEME["orange"])
             # 不 return，允许继续
 
@@ -919,19 +908,40 @@ class LOLHistoryApp:
                                if k not in cookies]
                     self._msg_queue.put(("capture_fail", missing))
             except ImportError as e:
-                self._msg_queue.put(("capture_error", f"缺少依赖: {e}\n请运行: pip install mitmproxy"))
+                self._msg_queue.put(("capture_error", f"抓包组件缺失，请重新安装本程序"))
             except Exception as e:
                 self._msg_queue.put(("capture_error", f"抓包失败: {e}\n{traceback.format_exc()}"))
 
         threading.Thread(target=worker, daemon=True).start()
 
+    # ── 错误消息映射 ──────────────────────────────────────────────────────────
+    _ERROR_MAP = {
+        "8025009": ("登录凭据已过期", "请重新获取凭据"),
+        "8000002": ("请求过于频繁", "请稍等 30 秒后重试"),
+        "Connection refused": ("无法连接服务器", "请检查网络连接"),
+        "ConnectionError": ("网络连接失败", "请检查网络是否正常"),
+        "timeout": ("请求超时", "服务器响应慢，请稍后重试"),
+        "mitmproxy": ("抓包组件异常", "请重新启动程序"),
+        "certificate": ("HTTPS 证书问题", "请尝试重新安装证书"),
+    }
+
+    def _friendly_error(self, raw_msg: str) -> str:
+        """将技术错误转为用户可理解的提示。"""
+        for keyword, (title, suggestion) in self._ERROR_MAP.items():
+            if keyword.lower() in raw_msg.lower():
+                return f"{title}\n→ {suggestion}"
+        # 未匹配到，截断过长的 traceback
+        if len(raw_msg) > 300:
+            return raw_msg[:300] + "\n…(更多详情见日志)"
+        return raw_msg
+
     def _handle_capture_done(self, cookies: dict):
         """处理抓包完成。"""
         puin = cookies.get('puin', '')
         self._capture_status.configure(
-            text=f"✅ 成功捕获 {len(cookies)}/4 项 Cookie！"
+            text=f"✅ 成功获取 {len(cookies)}/4 项登录凭据！"
                  f"puin={puin[:20]}{'…' if len(puin) > 20 else ''}  |  "
-                 f"Cookie 已自动保存，可直接进入下一步",
+                 f"凭据已自动保存，可进入下一步",
             fg=THEME["green"])
         self._btn_capture.configure(state="normal", text="🔄 重新抓包")
 
@@ -944,8 +954,8 @@ class LOLHistoryApp:
     def _handle_capture_fail(self, missing: list):
         """处理抓包部分失败。"""
         self._capture_status.configure(
-            text=f"⚠ 部分捕获: 仍缺 {', '.join(missing)}\n"
-                 f"请确认: ① 已登录 WeGame  ② 根证书已安装（点击上方按钮安装，无需管理员）",
+            text=f"⚠ 部分凭据未获取: 缺少 {', '.join(missing)}\n"
+                 f"请确认: ① WeGame 已登录  ② HTTPS 证书已安装",
             fg=THEME["orange"])
         self._btn_capture.configure(state="normal", text="🔄 重新抓包")
         self._update_cookie_button()
@@ -954,7 +964,8 @@ class LOLHistoryApp:
 
     def _handle_capture_error(self, msg: str):
         """处理抓包错误。"""
-        self._capture_status.configure(text=f"❌ {msg}", fg=THEME["red"])
+        friendly = self._friendly_error(msg)
+        self._capture_status.configure(text=f"❌ {friendly}", fg=THEME["red"])
         self._btn_capture.configure(state="normal", text="🔄 重试抓包")
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -987,33 +998,33 @@ class LOLHistoryApp:
         if status == "installed":
             self._cert_status_icon.configure(text="✅", fg=THEME["green"])
             self._cert_status_text.configure(
-                text="根证书已安装 — 抓包功能已就绪",
+                text="HTTPS 证书已就绪 — 可开始抓包",
                 fg=THEME["green"])
             self._btn_install_cert.configure(
-                text="🔒 重新安装根证书",
+                text="🔒 重新安装 HTTPS 证书",
                 state="normal")
         elif status == "exists":
             self._cert_status_icon.configure(text="⚠", fg=THEME["orange"])
             self._cert_status_text.configure(
-                text="根证书文件已生成但尚未安装到系统 — 请点击右侧按钮安装（无需管理员权限）",
+                text="HTTPS 证书已生成，点击右侧按钮完成安装（无需管理员）",
                 fg=THEME["orange"])
             self._btn_install_cert.configure(
-                text="🔒 安装根证书（仅需一次）",
+                text="🔒 安装 HTTPS 证书（仅需一次）",
                 state="normal")
         else:  # missing
             self._cert_status_icon.configure(text="❌", fg=THEME["red"])
             self._cert_status_text.configure(
-                text="根证书尚未生成 — 请先点击右侧按钮生成并安装（仅需一次，约 5 秒）",
+                text="HTTPS 证书尚未生成 — 点击右侧按钮生成（仅需一次，约 5 秒）",
                 fg=THEME["red"])
             self._btn_install_cert.configure(
-                text="🔒 生成并安装根证书",
+                text="🔒 生成并安装 HTTPS 证书",
                 state="normal")
 
     def _install_cert(self):
-        """在后台线程生成并安装根证书。"""
+        """在后台线程生成并安装 HTTPS 证书。"""
         self._btn_install_cert.configure(state="disabled", text="⏳ 处理中...")
         self._cert_status_text.configure(
-            text="正在处理根证书，请稍候...", fg=THEME["orange"])
+            text="正在处理 HTTPS 证书，请稍候...", fg=THEME["orange"])
 
         def worker():
             try:
@@ -1023,7 +1034,7 @@ class LOLHistoryApp:
 
                 if not cert_path:
                     # 证书文件不存在 — 需要先启动 mitmproxy 生成证书
-                    self._msg_queue.put(("log", "根证书文件不存在，正在启动 mitmproxy 生成证书...\n"))
+                    self._msg_queue.put(("log", "HTTPS 证书文件不存在，正在启动代理引擎生成证书...\n"))
                     self._msg_queue.put(("cert_status", "generating"))
 
                     # GUI/exe 模式下 sys.stdout 可能为 None（noconsole），
@@ -1093,7 +1104,7 @@ class LOLHistoryApp:
                     sys.stdout = _saved_stdout
 
                 if not cert_path:
-                    self._msg_queue.put(("cert_error", "未能生成根证书文件，请检查 mitmproxy 是否正确安装"))
+                    self._msg_queue.put(("cert_error", "未能生成 HTTPS 证书文件，请检查代理引擎是否正确安装"))
                     return
 
                 # 安装证书
@@ -1108,7 +1119,7 @@ class LOLHistoryApp:
 
             except ImportError as e:
                 self._msg_queue.put(("cert_error",
-                    f"缺少依赖: {e}\n请运行: pip install mitmproxy"))
+                    f"抓包组件缺失，请重新安装本程序"))
             except Exception as e:
                 self._msg_queue.put(("cert_error",
                     f"证书操作失败: {e}\n{traceback.format_exc()}"))
@@ -1119,15 +1130,16 @@ class LOLHistoryApp:
         """证书安装完成。"""
         self._update_cert_status_ui("installed")
         self._capture_status.configure(
-            text="✅ 根证书已安装，可以开始抓包了！", fg=THEME["green"])
+            text="✅ HTTPS 证书已安装，可以开始抓包了！", fg=THEME["green"])
 
     def _handle_cert_error(self, msg: str):
         """证书操作失败。"""
         # 重新检测当前状态
         status = self._check_cert_status()
         self._update_cert_status_ui(status)
+        friendly = self._friendly_error(msg)
         self._capture_status.configure(
-            text=f"❌ {msg}", fg=THEME["red"])
+            text=f"❌ {friendly}", fg=THEME["red"])
 
     def _go_to_cookie(self):
         """从欢迎页跳到 Cookie 页。"""
@@ -1144,7 +1156,7 @@ class LOLHistoryApp:
                                       bg=THEME["bg"], fg=THEME["gold"])
         self._fetch_title.pack(anchor="w", pady=(0, 4))
 
-        self._fetch_sub = tk.Label(page, text="准备连接 WeGame API", font=FONT_SMALL,
+        self._fetch_sub = tk.Label(page, text="准备连接 WeGame 服务器", font=FONT_SMALL,
                                     bg=THEME["bg"], fg=THEME["text2"])
         self._fetch_sub.pack(anchor="w", pady=(0, 16))
 
@@ -1211,7 +1223,7 @@ class LOLHistoryApp:
         log_header_frame = tk.Frame(page, bg=THEME["bg"])
         log_header_frame.pack(fill="x")
 
-        self._log_toggle = tk.Label(log_header_frame, text="▸ 显示详细日志",
+        self._log_toggle = tk.Label(log_header_frame, text="▸ 显示技术日志（调试用）",
                                      font=FONT_SMALL, bg=THEME["bg"],
                                      fg=THEME["text3"], cursor="hand2")
         self._log_toggle.pack(side="left")
@@ -1243,10 +1255,10 @@ class LOLHistoryApp:
     def _toggle_log(self, event=None):
         if self._log_frame.winfo_ismapped():
             self._log_frame.pack_forget()
-            self._log_toggle.configure(text="▸ 显示详细日志")
+            self._log_toggle.configure(text="▸ 显示技术日志（调试用）")
         else:
             self._log_frame.pack(fill="both", expand=True, pady=(4, 0))
-            self._log_toggle.configure(text="▾ 隐藏详细日志")
+            self._log_toggle.configure(text="▾ 隐藏技术日志")
 
     def _append_log(self, text: str):
         """追加文本到日志区。"""
@@ -1269,9 +1281,9 @@ class LOLHistoryApp:
         missing = validate_cookies(cookies)
         if missing:
             messagebox.showwarning(
-                "Cookie 不完整",
-                f"缺少以下必需 Cookie: {', '.join(missing)}\n\n"
-                f"请先完成 Cookie 获取步骤。")
+                "登录凭据不完整",
+                f"缺少必需凭据: {', '.join(missing)}\n\n"
+                f"请返回上一步完成凭据获取。")
             return
 
         # 保存 Cookie
@@ -1327,13 +1339,13 @@ class LOLHistoryApp:
                 from lolhistory._analysis import generate_report
 
                 # ── 阶段 1: 连接 ────────────────────────────────────────────
-                self._msg_queue.put(("status", "connect", "⏳ 正在连接 WeGame API..."))
+                self._msg_queue.put(("status", "connect", "⏳ 正在连接 WeGame 服务器..."))
                 self._msg_queue.put(("progress", 2, ""))
 
                 client = WegameApiClient(cookies)
 
                 if not client.test_connection():
-                    self._msg_queue.put(("error", "连接失败，请检查 Cookie 是否有效"))
+                    self._msg_queue.put(("error", "连接失败，请检查登录凭据是否有效"))
                     self._msg_queue.put(("status", "connect", "❌ 连接失败", THEME["red"]))
                     return
 
@@ -1597,7 +1609,8 @@ class LOLHistoryApp:
 
     def _handle_error(self, msg: str):
         """处理全局错误。"""
-        messagebox.showerror("错误", msg)
+        friendly = self._friendly_error(msg)
+        messagebox.showerror("错误", friendly)
         self._show_page(1)
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -1765,7 +1778,7 @@ class LOLHistoryApp:
                     self._append_log(text)
                     if "代理已开启" in text or "正在监听" in text:
                         self._capture_status.configure(
-                            text="✅ 抓包引擎已准备就绪 — 请打开并登录 WeGame",
+                            text="✅ 代理引擎已就绪 — 请打开并登录 WeGame",
                             fg=THEME["green"])
                         self._btn_capture.configure(text="⏳ 等待登录...")
                     elif "等待中" in text:
@@ -1774,7 +1787,7 @@ class LOLHistoryApp:
                             fg=THEME["orange"])
                     elif "成功提取" in text or "已捕获全部" in text:
                         self._capture_status.configure(
-                            text="🎉 已捕获全部 Cookie！正在保存…",
+                            text="🎉 已获取全部凭据！正在保存…",
                             fg=THEME["blue"])
 
                 elif msg_type == "status":
@@ -1810,10 +1823,10 @@ class LOLHistoryApp:
                     # 证书操作进度更新
                     if msg[1] == "generating":
                         self._cert_status_text.configure(
-                            text="正在生成根证书文件...", fg=THEME["orange"])
+                            text="正在生成 HTTPS 证书文件...", fg=THEME["orange"])
                     elif msg[1] == "installing":
                         self._cert_status_text.configure(
-                            text="正在安装根证书到系统...", fg=THEME["orange"])
+                            text="正在安装 HTTPS 证书到系统...", fg=THEME["orange"])
 
                 elif msg_type == "cert_done":
                     self._handle_cert_done()

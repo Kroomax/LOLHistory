@@ -166,7 +166,7 @@ def run_wegame(args) -> int:
               file=sys.stderr)
         return 1
 
-    delay = 200
+    delay = 101  # WeGame API 请求间隔，单位毫秒
     skip_tft = True
 
     client = WegameApiClient(cookies)
