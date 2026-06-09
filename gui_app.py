@@ -29,6 +29,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+# ── 基础目录：exe 所在目录（打包后）或脚本所在目录（源码运行）──
+# 用此替代 Path.cwd()，确保数据库/报告与程序在同一目录，避免
+# 因启动方式不同（快捷方式/命令行/任务栏）导致 cwd 不一致，
+# 进而使跳过/回填机制失效。
+if getattr(sys, 'frozen', False):
+    BASE_DIR = Path(sys.executable).parent.resolve()
+else:
+    BASE_DIR = Path(__file__).resolve().parent
+
 # ── tkinter ──────────────────────────────────────────────────────────────────
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -1179,7 +1188,7 @@ class LOLHistoryApp:
 
                 # 查询已有对局 ID 以跳过重复获取（与 CLI 保持一致）
                 existing_ids = set()
-                db_path_for_check = str(Path.cwd() / "wegame_matches.db")
+                db_path_for_check = str(BASE_DIR / "wegame_matches.db")
                 if Path(db_path_for_check).exists():
                     try:
                         import sqlite3 as _sqlite3
@@ -1233,7 +1242,7 @@ class LOLHistoryApp:
                 # 查询已有详情 + 回填缺失详情（与 CLI 保持一致）
                 existing_detail_ids: set[str] = set()
                 backfill_ids: set[str] = set()
-                db_detail_path = str(Path.cwd() / "wegame_matches.db")
+                db_detail_path = str(BASE_DIR / "wegame_matches.db")
                 if Path(db_detail_path).exists():
                     try:
                         import sqlite3 as _sqlite3
@@ -1299,7 +1308,7 @@ class LOLHistoryApp:
                 self._msg_queue.put(("progress", 80, "导出中..."))
 
                 parsed = [parse_battle_summary(b, area=area) for b in all_battles]
-                db_path = str(Path.cwd() / "wegame_matches.db")
+                db_path = str(BASE_DIR / "wegame_matches.db")
                 self._db_path = db_path
 
                 try:
@@ -1491,7 +1500,7 @@ class LOLHistoryApp:
     def _open_folder(self):
         """打开输出文件夹。"""
         import subprocess
-        p = str(Path.cwd().resolve())
+        p = str(BASE_DIR.resolve())
         try:
             os.startfile(p)
         except Exception:

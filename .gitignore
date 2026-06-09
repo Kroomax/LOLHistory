@@ -24,6 +24,11 @@ report*
 # IDE settings
 .vscode/
 
+# PyInstaller packaging
+build/
+dist/
+*.spec
+
 # OS files
 Thumbs.db
 .DS_Store
