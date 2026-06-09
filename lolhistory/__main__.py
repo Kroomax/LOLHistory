@@ -348,11 +348,6 @@ def run_wegame(args) -> int:
     if os.path.exists(db_path):
         import sqlite3
         conn = sqlite3.connect(db_path)
-        # 旧库升级：确保 area 列存在
-        try:
-            conn.execute("ALTER TABLE match_summary ADD COLUMN area INTEGER DEFAULT 1")
-        except sqlite3.OperationalError:
-            pass
         rows = conn.execute(
             "SELECT game_id FROM match_summary WHERE area = ?", (args.area,)
         ).fetchall()
@@ -403,10 +398,6 @@ def run_wegame(args) -> int:
         if os.path.exists(db_path):
             import sqlite3
             conn = sqlite3.connect(db_path)
-            try:
-                conn.execute("ALTER TABLE match_detail ADD COLUMN area INTEGER DEFAULT 1")
-            except sqlite3.OperationalError:
-                pass
             rows = conn.execute(
                 "SELECT DISTINCT game_id FROM match_detail WHERE area = ?", (args.area,)
             ).fetchall()
