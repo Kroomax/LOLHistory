@@ -177,15 +177,15 @@ class LOLHistoryApp:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("LOLhistory — 英雄联盟对局分析")
-        self.root.geometry("1060x720")
-        self.root.minsize(980, 640)
+        self.root.geometry("1060x780")
+        self.root.minsize(980, 690)
         self.root.configure(bg=THEME["bg"])
 
         # 居中窗口
         self.root.update_idletasks()
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
-        w, h = 1060, 720
+        w, h = 1060, 780
         x = (sw - w) // 2
         y = (sh - h) // 2
         self.root.geometry(f"{w}x{h}+{x}+{y}")
@@ -632,12 +632,15 @@ class LOLHistoryApp:
         self._btn_capture.pack(side="left")
 
         # ── 分隔线 ──────────────────────────────────────────────────────────
-        sep_frame = tk.Frame(page, bg=THEME["bg"], height=30)
+        sep_frame = tk.Frame(page, bg=THEME["bg"], height=24)
         sep_frame.pack(fill="x")
-        tk.Frame(sep_frame, bg=THEME["border"], height=1).place(relx=0, rely=0.5, relwidth=0.42)
+        tk.Frame(sep_frame, bg=THEME["border"], height=1).place(
+            relx=0, rely=0.5, relwidth=0.43, anchor="w")
         tk.Label(sep_frame, text="或者", font=FONT_SMALL,
-                  bg=THEME["bg"], fg=THEME["text3"]).place(relx=0.45, rely=0.3)
-        tk.Frame(sep_frame, bg=THEME["border"], height=1).place(relx=0.55, rely=0.5, relwidth=0.42)
+                  bg=THEME["bg"], fg=THEME["text3"]).place(
+            relx=0.5, rely=0.5, anchor="center")
+        tk.Frame(sep_frame, bg=THEME["border"], height=1).place(
+            relx=0.58, rely=0.5, relwidth=0.42, anchor="w")
 
         # ── 方式二：选择已有文件 / 手动填入 ─────────────────────────────────
         self._manual_card = tk.Frame(page, bg=THEME["card"],

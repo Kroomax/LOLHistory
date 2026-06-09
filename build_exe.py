@@ -113,8 +113,8 @@ def main() -> int:
         print("         Install: winget install upx/upx")
 
     # ── Step 4: clean old output ──
-    old_exe = ROOT / "dist" / "lolhistory-gui.exe"
-    out_name = "lolhistory-gui"
+    old_exe = ROOT / "dist" / "LOLhistory.exe"
+    out_name = "LOLhistory"
     if old_exe.exists():
         try:
             old_exe.unlink()
@@ -122,7 +122,7 @@ def main() -> int:
         except PermissionError:
             import datetime
             ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            out_name = f"lolhistory-gui-{ts}"
+            out_name = f"LOLhistory-{ts}"
             print(f"  [WARN] Old exe locked (AV?), outputting as {out_name}.exe")
 
     # ── Step 5: package ──
@@ -146,6 +146,7 @@ def main() -> int:
         "--noconsole",
         "--clean",
         "--name", out_name,
+        "--icon", str(ROOT / "archive" / "exe-icon.ico"),
         # ── mitmproxy: 只收集 data + binaries，不收集全部子模块 ──
         #   原因：addons/__init__.py 已显式导入所有 addon，PyInstaller 可自动追踪。
         #   全部 --collect-submodules 会把 Console UI (urwid)、Web UI 等打包进去。
