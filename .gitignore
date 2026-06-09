@@ -8,18 +8,18 @@ __pycache__/
 
 # Sensitive authentication data
 cookies.json
-TODO*
-test*
-wegame-api-export/*
-!wegame-api-export/request_example.txt
 
 # Generated output files
 *.csv
 *.db
-*.json
-report*
 *.db-shm
 *.db-wal
+report*.html
+TODO*
+test*.py
+api-export/*
+!example*
+!demo*
 
 # IDE settings
 .vscode/
