@@ -298,7 +298,7 @@ def run_capture(output: str = "cookies.json",
     print(f"  [OK] 代理已开启 (127.0.0.1:{port})")
     print(f"  [OK] 正在监听 WeGame 请求...")
     print()
-    print("  请登录 WeGame 即可自动完成抓包")
+    print("  请登录 WeGame 或翻页历史战绩即可自动完成抓包")
     print(f"  （超时={timeout}s，按 Ctrl+C 取消）")
     print()
 

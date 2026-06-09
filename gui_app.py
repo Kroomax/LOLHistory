@@ -589,8 +589,10 @@ class LOLHistoryApp:
         cap_steps = [
             "1. 首次使用需先点击下方「安装 HTTPS 证书」（仅需一次，无需管理员）",
             "2. 点击「开始抓包」→ 等待引擎启动（约 3 秒）",
-            "3. 看到「代理引擎已就绪」提示后，打开并登录 WeGame",
-            "4. 登录成功后凭据自动获取，无需任何额外操作",
+            "3. 看到「代理引擎已就绪」后：",
+            "   ▸ 如未启动 WeGame：启动客户端并登录账号",
+            "   ▸ 如已登录 WeGame：打开「历史战绩」并翻页浏览",
+            "4. 凭据自动捕获并保存，无需其他操作",
         ]
         for step in cap_steps:
             tk.Label(cap_inner, text=step, font=FONT_BODY,
@@ -1158,7 +1160,13 @@ class LOLHistoryApp:
 
         self._fetch_sub = tk.Label(page, text="准备连接 WeGame 服务器", font=FONT_SMALL,
                                     bg=THEME["bg"], fg=THEME["text2"])
-        self._fetch_sub.pack(anchor="w", pady=(0, 16))
+        self._fetch_sub.pack(anchor="w", pady=(0, 4))
+
+        self._fetch_region_hint = tk.Label(
+            page,
+            text="📌 当前默认拉取艾欧尼亚大区数据，游戏大区切换功能敬请期待",
+            font=FONT_SMALL, bg=THEME["bg"], fg=THEME["text3"])
+        self._fetch_region_hint.pack(anchor="w", pady=(0, 16))
 
         # ── 状态卡片 ────────────────────────────────────────────────────────
         status_card = tk.Frame(page, bg=THEME["card"],
@@ -1778,12 +1786,12 @@ class LOLHistoryApp:
                     self._append_log(text)
                     if "代理已开启" in text or "正在监听" in text:
                         self._capture_status.configure(
-                            text="✅ 代理引擎已就绪 — 请打开并登录 WeGame",
+                            text="✅ 代理引擎已就绪 — 请登录 WeGame 或翻页历史战绩触发抓包",
                             fg=THEME["green"])
                         self._btn_capture.configure(text="⏳ 等待登录...")
                     elif "等待中" in text:
                         self._capture_status.configure(
-                            text="⏳ 等待 WeGame 登录… 请打开 WeGame 客户端并登录您的账号",
+                            text="⏳ 等待凭据触发… 如已登录请打开历史战绩并翻页",
                             fg=THEME["orange"])
                     elif "成功提取" in text or "已捕获全部" in text:
                         self._capture_status.configure(
