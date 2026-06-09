@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LOL 对局历史数据分析报告</title>
+<style>
+:root{
+--bg:#0a0e14;--bg2:rgba(20,27,34,0.65);--card:#1a2230;--card-alpha:rgba(26,34,48,0.75);--card-hover:#212b38;
+--border:#2a3a4a;--text:#d4d8dd;--text2:#8b95a5;--text3:#5a6575;
+--gold:#c8aa6e;--blue:#0ac8b9;--green:#2ecc71;--red:#e74c3c;
+--blue2:#4a9eff;--purple:#a855f7;--orange:#f59e0b;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-padding-top:92px;scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:"Microsoft YaHei","PingFang SC",sans-serif;line-height:1.6;min-height:100vh}
+a{color:var(--blue);text-decoration:none}
+nav{position:sticky;top:0;z-index:100;background:rgba(10,14,20,0.25);backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:14px 28px;display:flex;justify-content:center;align-items:center;gap:10px;overflow-x:auto;white-space:nowrap}
+nav .logo{color:var(--gold);font-weight:700;font-size:18px;margin-right:20px}
+nav a{color:var(--text2);font-size:14px;padding:8px 14px;border-radius:6px;transition:all .2s}
+nav a:hover{color:var(--text);background:var(--card)}
+main{max-width:1280px;margin:0 auto;padding:24px 20px 60px}
+.hero{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:32px}
+.hero-card{background:var(--card-alpha);backdrop-filter:blur(2px);border:1px solid var(--border);border-radius:10px;padding:16px 18px;text-align:center;transition:transform .2s}
+.hero-card:hover{transform:translateY(-2px)}
+.hero-card .value{font-size:28px;font-weight:700;color:var(--gold)}
+.hero-card .label{font-size:12px;color:var(--text2);margin-top:4px}
+.hero-card.win .value{color:var(--green)}
+.hero-card.loss .value{color:var(--red)}
+.player-banner{display:flex;align-items:center;gap:18px;background:linear-gradient(135deg,rgba(200,170,110,0.10),rgba(10,200,185,0.05),rgba(10,14,20,0.6));border:1px solid rgba(200,170,110,0.28);border-radius:14px;padding:20px 28px;margin-bottom:20px}
+.player-banner .pb-icon{flex-shrink:0}.player-banner .pb-icon img{width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid rgba(200,170,110,0.35);filter:drop-shadow(0 2px 10px rgba(200,170,110,0.25))}
+.player-banner .pb-info{flex:1;min-width:0}
+.player-banner .pb-main{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:4px}
+.player-banner .pb-name{font-size:26px;font-weight:700;color:var(--gold);letter-spacing:0.5px}
+.player-banner .pb-level{display:inline-block;background:rgba(200,170,110,0.12);color:var(--gold);border:1px solid rgba(200,170,110,0.22);border-radius:16px;padding:1px 12px;font-size:13px;font-weight:500;white-space:nowrap}
+.player-banner .pb-tier{display:inline-block;background:linear-gradient(135deg,rgba(74,158,255,0.18),rgba(168,85,247,0.12));border:1px solid rgba(74,158,255,0.28);border-radius:16px;padding:1px 14px;font-size:13px;font-weight:600;color:var(--blue2);white-space:nowrap}
+.player-banner .pb-sub{font-size:13px;color:var(--text2)}
+.player-banner .pb-sub span{color:var(--text);font-weight:500}
+.overall-rating{background:linear-gradient(135deg,rgba(200,170,110,0.15),rgba(10,200,185,0.08));border:1px solid var(--gold);border-radius:10px;padding:14px 20px;margin-bottom:16px;font-size:15px;color:var(--gold);text-align:center;font-weight:500}
+@media(max-width:640px){.player-banner .pb-name{font-size:20px}.player-banner .pb-icon img{width:40px;height:40px}}
+.section{margin-bottom:40px}
+.section-title{font-size:22px;font-weight:700;color:var(--gold);margin-bottom:8px;padding-bottom:8px;border-bottom:2px solid var(--border);display:flex;align-items:center;gap:10px}
+.section-subtitle{font-size:13px;color:var(--text2);margin-bottom:16px}
+.chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:20px}
+@media(max-width:768px){.chart-grid{grid-template-columns:1fr}}
+.chart-card{background:var(--card-alpha);backdrop-filter:blur(2px);border:1px solid var(--border);border-radius:10px;padding:20px;transition:border-color .2s}
+.chart-card:hover{border-color:var(--gold)}
+.chart-card h3{font-size:15px;font-weight:600;color:var(--text);margin-bottom:4px}
+.chart-card .chart-wrap{position:relative;width:100%;margin:12px 0}
+.chart-card .chart-wrap canvas{display:block;width:100%!important;height:100%!important}
+.chart-card .summary{font-size:13px;color:var(--gold);font-style:italic;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);line-height:1.7}
+.chart-card .summary.na{color:var(--text3)}
+.chart-card.full{grid-column:1/-1}
+.stat-row{display:flex;gap:24px;flex-wrap:wrap;margin:12px 0 20px}
+.stat-item{background:var(--bg2);border-radius:8px;padding:8px 14px}
+.stat-item .sv{font-weight:700;color:var(--blue)}
+.stat-item .sl{font-size:11px;color:var(--text3);margin-left:4px}
+footer{text-align:center;padding:32px 20px;color:var(--text3);font-size:12px;border-top:1px solid var(--border)}
+footer span{color:var(--gold)}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+body{position:relative}
+body::before{content:'';position:fixed;top:0;left:0;right:0;bottom:0;background-image:var(--bg-image,none);background-size:cover;background-position:center;background-repeat:no-repeat;opacity:0.25;z-index:0;pointer-events:none}
+body::after{content:'';position:fixed;top:0;left:0;right:0;bottom:0;background:linear-gradient(to right,rgba(10,14,20,0.50) 0%,rgba(10,14,20,0.10) 14%,transparent 28%,transparent 72%,rgba(10,14,20,0.10) 86%,rgba(10,14,20,0.50) 100%);z-index:0;pointer-events:none}
+main,footer{position:relative;z-index:1}
+.skin-switch-btn{flex-shrink:0;background:rgba(200,170,110,0.10);border:1px solid rgba(200,170,110,0.22);color:var(--gold);padding:6px 14px;border-radius:8px;cursor:pointer;font-size:12px;transition:all .2s;white-space:nowrap;user-select:none}
+.skin-switch-btn:hover{background:rgba(200,170,110,0.22);border-color:rgba(200,170,110,0.4)}
+.skin-switch-btn.loading{opacity:0.5;cursor:wait}
+@media(max-width:640px){.skin-switch-btn{padding:4px 10px;font-size:11px}}
+</style>
+</head>
+<body style="--bg-image: url('https://wegame.gtimg.com/g.26-r.c2d3c/helper/lol/assis/images/resources/skins/original/157-001.jpg');">
+<nav><span class="logo">⚔️ LOLhistory</span><a href="#overview">📊 总览</a><a href="#winrate">🔮 胜率因子</a><a href="#game-rhythm">🎮 游戏节奏</a><a href="#psychology">🧠 游戏心理</a><a href="#player-level">📈 玩家水平</a><a href="#attendance">📅 出勤日历</a></nav>
+<main>
+<section id="overview"><div class="player-banner">
+  <div class="pb-icon"><img src="https://wegame.gtimg.com/g.26-r.c2d3c/helper/lol/assis/images/resources/champions/157.png" alt="亚索" title="亚索" onerror="this.parentElement.innerHTML='⚔️'"></div>
+  <div class="pb-info">
+    <div class="pb-main">
+      <span class="pb-name">DemoPlayer</span>
+      <span class="pb-level">Lv.287</span>
+      <span class="pb-tier">翡翠 · 95胜点</span>
+    </div>
+  </div>
+  <button class="skin-switch-btn loading" id="skinSwitchBtn" title="皮肤检测中…">🎨 背景换肤</button>
+</div><div class="overall-rating">⭐ ⭐ 强势上分选手——胜率稳健，实力远超当前段位。 招牌英雄亚索（78场）；英雄池深达12个高胜率英雄，BP阶段难以被针对；MVP率高达14.2%，在队伍中经常扮演关键角色；最长打出过12连胜，上分爆发力强；综合KDA高达3.37，击杀参与度高且死亡控制得当；斩获8次四杀，离五杀只差临门一脚。</div><div class="section-subtitle" style="margin-top:20px">🏆 生涯里程碑</div><div class="hero"><div class="hero-card "><div class="value">500</div><div class="label">生涯总场次</div></div><div class="hero-card "><div class="value">2,805</div><div class="label">生涯总击杀</div></div><div class="hero-card "><div class="value">3,590</div><div class="label">生涯总助攻</div></div><div class="hero-card "><div class="value">9,500</div><div class="label">生涯总插眼</div></div><div class="hero-card "><div class="value">12局</div><div class="label">生涯最长连胜</div></div><div class="hero-card "><div class="value">18</div><div class="label">生涯总超神</div></div><div class="hero-card "><div class="value">71</div><div class="label">生涯MVP</div></div><div class="hero-card "><div class="value">7</div><div class="label">生涯SVP</div></div><div class="hero-card "><div class="value">1</div><div class="label">生涯五杀</div></div><div class="hero-card "><div class="value">15</div><div class="label">单局最高击杀</div></div><div class="hero-card "><div class="value">19</div><div class="label">单局最高助攻</div></div><div class="hero-card "><div class="value">59,735</div><div class="label">单局最高伤害</div></div><div class="hero-card "><div class="value">63,156</div><div class="label">单局最高承伤</div></div><div class="hero-card "><div class="value">16,043</div><div class="label">单局最高经济</div></div><div class="hero-card "><div class="value">388</div><div class="label">单局最高补刀</div></div><div class="hero-card "><div class="value">6</div><div class="label">单局最多推塔</div></div><div class="hero-card "><div class="value">44min</div><div class="label">生涯最长游戏时间</div></div><div class="hero-card win"><div class="value">96.6%</div><div class="label">受欢迎度</div></div></div><div class="section-subtitle" style="margin-top:16px">📊 近期对局概览</div><div class="hero"><div class="hero-card "><div class="value">500</div><div class="label">总场次</div></div><div class="hero-card win"><div class="value">57.0%</div><div class="label">胜率</div></div><div class="hero-card "><div class="value">3.37</div><div class="label">整体 KDA</div></div><div class="hero-card "><div class="value">5.6</div><div class="label">场均击杀</div></div><div class="hero-card "><div class="value">3.8</div><div class="label">场均死亡</div></div><div class="hero-card "><div class="value">7.2</div><div class="label">场均助攻</div></div><div class="hero-card "><div class="value">9,006</div><div class="label">场均经济</div></div><div class="hero-card "><div class="value">71</div><div class="label">总 MVP</div></div><div class="hero-card "><div class="value">7</div><div class="label">总 SVP</div></div><div class="hero-card "><div class="value">1</div><div class="label">五杀次数</div></div><div class="hero-card "><div class="value">8</div><div class="label">四杀次数</div></div><div class="hero-card "><div class="value">12局</div><div class="label">最长连胜</div></div><div class="hero-card "><div class="value">56.6%</div><div class="label">出勤率</div></div><div class="hero-card "><div class="value">189</div><div class="label">出勤天数</div></div><div class="hero-card "><div class="value">12</div><div class="label">英雄池</div></div><div class="hero-card "><div class="value">亚索</div><div class="label">招牌英雄</div></div><div class="hero-card "><div class="value">铂金  (98胜点)</div><div class="label">最高段位</div></div><div class="hero-card "><div class="value">白银  (95胜点)</div><div class="label">当前段位</div></div></div></section>
+<section id="winrate" class="section"><div class="section-title">🔮 胜率因子</div><div class="section-subtitle">多维度下钻胜率，定位影响你上分的关键因子</div><div class="chart-grid"><div class="chart-card">
+<h3>📅 星期几胜率</h3>
+<div class="chart-wrap"><canvas id="chart-day"></canvas></div>
+<p class="summary">星期几确实影响你的状态——周日胜率(69.4%)比周五(51.9%)高出 18%，你是典型的'周日战神'。</p>
+</div><div class="chart-card">
+<h3>🕐 时段胜率</h3>
+<div class="chart-wrap"><canvas id="chart-hour"></canvas></div>
+<p class="summary">你的黄金时段是 18:00（胜率 66.7%，27场），而 15:00 胜率仅 46.7%（15场）——也许深夜排位不是好主意？</p>
+</div><div class="chart-card">
+<h3>🔵 红蓝方胜率</h3>
+<div class="chart-wrap"><canvas id="chart-side"></canvas></div>
+<p class="summary">红蓝双方对你几乎无影响（蓝色 57.1% vs 红色 56.9%），在哪边都能稳定发挥。</p>
+</div><div class="chart-card">
+<h3>🎯 位置胜率</h3>
+<div class="chart-wrap"><canvas id="chart-position"></canvas></div>
+<p class="summary">你的主位置是中单（164场，胜率53.7%）。 客串打野时胜率意外达到64.6%，或许是隐藏天赋。</p>
+</div><div class="chart-card">
+<h3>⏱️ 对局时长胜率</h3>
+<div class="chart-wrap"><canvas id="chart-duration"></canvas></div>
+<p class="summary">你是快攻型选手——前20分钟胜率 58.6% 远高于大后期 52.4%，速战速决才是你的节奏。</p>
+</div><div class="chart-card">
+<h3>📊 LP区间胜率</h3>
+<div class="chart-wrap"><canvas id="chart-lp-range"></canvas></div>
+<p class="summary">有趣——你在低 LP 区间（65.4%）反而比晋级边缘（40.0%）打得好，或许是晋级压力影响了发挥？</p>
+</div><div class="chart-card full">
+<h3>🔮 胜率极差排名</h3>
+<div class="chart-wrap"><canvas id="chart-mystery"></canvas></div>
+<p class="summary">影响你胜率最大的'神秘因子'是【LP区间】，胜率极差高达 25.4%。 关键局的发挥决定了你的上分效率。</p>
+</div><div class="chart-card full">
+<h3>🏅 荣誉与胜率</h3>
+<div class="chart-wrap"><canvas id="chart-honors"></canvas></div>
+<p class="summary">获得'击杀最多'时胜率飙升 48%（100.0% vs 51.8%），当你成为击杀王时（54场），队伍基本锁定胜局。</p>
+</div></div></section><section id="game-rhythm" class="section"><div class="section-title">🎮 游戏节奏</div><div class="section-subtitle">游戏轮次模式（相邻对局间隔较短的连续游戏序列）、连续对局行为与胜率转移规律</div><div class="chart-grid"><div class="chart-card">
+    <h3>📏 游戏轮次规模分布</h3>
+    <div class="chart-wrap"><canvas id="chart-session-size"></canvas></div>
+    <p class="summary">共 162 个游戏轮次，40.7% 的轮次在 2 局以内，偏向短平快节奏，偶尔也会连打多局。最常见的规模是每次 1 局（占 27.8%），平均 3.1 局/轮次，最长连续 7 局。</p>
+    </div><div class="chart-card">
+<h3>🌅 轮次首局开始时间分布</h3>
+<div class="chart-wrap"><canvas id="chart-session-first-hour"></canvas></div>
+<p class="summary">首局最常在 21:00-21:59 时段开始——这是你'开张'的高频时段。</p>
+</div><div class="chart-card">
+<h3>🌙 轮次末局结束时间分布</h3>
+<div class="chart-wrap"><canvas id="chart-session-last-hour"></canvas></div>
+<p class="summary">游戏轮次最常在 21:00-21:59 时段结束——这是你'收工'的高峰时段。</p>
+</div><div class="chart-card">
+<h3>📈 轮次内第N局胜率</h3>
+<div class="chart-wrap"><canvas id="chart-session-pos"></canvas></div>
+<p class="summary">游戏轮次内各局胜率稳定，不受游戏顺序影响——状态保持能力强。</p>
+</div><div class="chart-card">
+<h3>🎰 '再来一局'陷阱</h3>
+<div class="chart-wrap"><canvas id="chart-one-more"></canvas></div>
+<p class="summary">共 162 个游戏轮次。🔍 赢一局就睡结果天亮了！33次（28.2%）赢后选择继续，但末局输掉——本该见好就收的胜利被'再来一局'葬送；连胜追击成功率高（30.8%以连胜收尾），手热时乘胜追击是有效策略</p>
+</div><div class="chart-card">
+<h3>🎢 输后与赢后胜率</h3>
+<div class="chart-wrap"><canvas id="chart-tilt"></canvas></div>
+<p class="summary">赢后胜率(58.5%)与输后(54.9%)相差仅 3.6%，心态稳定，不被上一局结果左右。</p>
+</div></div></section><section id="psychology" class="section"><div class="section-title">🧠 游戏心理</div><div class="section-subtitle">心态波动、情绪韧性与行为模式深度剖析</div><div class="chart-grid"><div class="chart-card">
+<h3>🔥 胜负连势分析</h3>
+<div class="chart-wrap"><canvas id="chart-streaks"></canvas></div>
+<p class="summary">最长连胜 12 局（05/18 ~ 05/22），那是一段值得怀念的上分之旅。</p>
+</div><div class="chart-card">
+<h3>📊 发挥稳定性</h3>
+<div class="chart-wrap"><canvas id="chart-consistency"></canvas></div>
+<p class="summary">你的发挥波动较大（KDA变异系数 92.6%），评分变异系数 86.3%。</p>
+</div><div class="chart-card">
+<h3>🚫 挂机影响</h3>
+<div class="chart-wrap"><canvas id="chart-afk"></canvas></div>
+<p class="summary">有 6 场挂机记录——挂机局胜率仅 50.0%，非挂机局 57.1%。保持在线就是最好的上分策略。</p>
+</div><div class="chart-card">
+<h3>🏳️ 投降分析</h3>
+<div class="chart-wrap"><canvas id="chart-surrender"></canvas></div>
+<p class="summary">投降率仅 5.2%——你是个不轻言放弃的选手，非投降局胜率 60.1%，坚持是最好的翻盘策略。</p>
+</div><div class="chart-card full">
+<h3>🪃 过度自信与救赎效应</h3>
+<div class="chart-wrap"><canvas id="chart-boomerang"></canvas></div>
+<p class="summary">MVP后下一局评分平均下降 11889 分（过度自信效应明显），MVP后胜率仅 64.7%；惨败后反弹 +10437.5 分（救赎效应），SVP后胜率 53.3%——知耻后勇！。</p>
+</div></div></section><section id="player-level" class="section"><div class="section-title">📈 玩家水平</div><div class="section-subtitle">段位演进、生涯全景、英雄池深度与个人能力画像</div><div class="chart-grid"><div class="chart-card full">
+<h3>📈 赛季段位演进</h3>
+<div class="chart-wrap"><canvas id="chart-season-tier-timeline"></canvas></div>
+<p class="summary">共 8 个赛季，最高段位 翡翠（S26），当前 翡翠。</p>
+</div><div class="chart-card">
+<h3>📊 全模式生涯分布</h3>
+<div class="chart-wrap"><canvas id="chart-career-mode-dist"></canvas></div>
+<p class="summary">生涯共 535 场，排位 233 场最多（43.6%）。</p>
+</div><div class="chart-card">
+<h3>🎯 各模式胜率对比</h3>
+<div class="chart-wrap"><canvas id="chart-career-mode-wr"></canvas></div>
+<p class="summary">各模式胜率：排位 55.8%、大乱斗 63.4%、匹配 56.8%、组排 52.1%、人机 100.0%、Clash 0.0%</p>
+</div><div class="chart-card full">
+<h3>📚 英雄池分布</h3>
+<div class="chart-wrap"><canvas id="chart-pool"></canvas></div>
+<p class="summary">英雄海！57 个不同英雄轮换，平均每个英雄跨 1.7 个位置，是真正的全能选手。</p>
+</div><div class="chart-card full">
+<h3>🎯 招牌英雄雷达</h3>
+<div class="chart-wrap"><canvas id="chart-radar"></canvas></div>
+<p class="summary">你的招牌英雄 亚索（78场，胜率55.1%），灰色虚线为全对局平均线（50分基准）。雷达面积超出灰色区域越多，说明该英雄在对应维度的表现越超平均水准。</p>
+</div><div class="chart-card">
+<h3>⚔️ 多杀含金量</h3>
+<div class="chart-wrap"><canvas id="chart-multikill"></canvas></div>
+<p class="summary">多杀能显著提升胜率——你的高光时刻直接转化为胜利。</p>
+</div><div class="chart-card">
+<h3>🎭 Carry依赖度画像</h3>
+<div class="chart-wrap"><canvas id="chart-carry-profile"></canvas></div>
+<p class="summary">更偏团队型选手，不依赖个人Carry取胜。 败局也大多是正常发挥，没有频繁崩盘。</p>
+</div><div class="chart-card full">
+<h3>💰 经济效率分析</h3>
+<div class="chart-wrap"><canvas id="chart-gpm"></canvas></div>
+<p class="summary">Ranked Solo：每分钟金币 ≥330 时胜率 82.6%，远高于低经济局 29.7%。经济就是一切！</p>
+</div></div></section><section id="attendance" class="section"><div class="section-title">📅 出勤日历</div><div class="section-subtitle">游戏习惯、活跃时段与段位变化全景</div><div class="chart-grid"><div class="chart-card full">
+<h3>🏆 各赛季对局数量与胜率</h3>
+<div class="chart-wrap"><canvas id="chart-season-stats"></canvas></div>
+<p class="summary">共 775 场覆盖 8 个赛季 · 最多场次赛季 S26（248场）。</p>
+</div><div class="chart-card full"><h3>🗓️ 关键日期</h3><p style="color:#8b95a5;font-size:12px;margin-bottom:8px">（仅统计 ≥3 场的日期）</p><div class="hero"><div class="hero-card win"><div class="value">100.0%</div><div class="label">🏆 胜率最高日<br>2026-03-21<br>5W0L · 5场</div></div><div class="hero-card loss"><div class="value">0.0%</div><div class="label">💔 胜率最低日<br>2026-08-07<br>0W4L · 4场</div></div><div class="hero-card"><div class="value">197min</div><div class="label">⏰ 最长游戏日<br>2026-12-23<br>7场</div></div><div class="hero-card win"><div class="value">+65</div><div class="label">📈 上分最多日<br>2026-04-29<br>7场</div></div><div class="hero-card loss"><div class="value">-449</div><div class="label">📉 掉分最多日<br>2026-08-01<br>6场</div></div><div class="hero-card"><div class="value">5场</div><div class="label">🏅 最多荣誉日<br>2026-09-05<br>多项荣誉加身</div></div></div></div><div class="chart-card full">
+<h3>📅 出勤日历热力图</h3>
+<div class="chart-wrap"><canvas id="chart-cal-heatmap"></canvas></div>
+<p class="summary">出勤率 56.6%，保持着健康的游戏频率，劳逸结合。 2026-03-21 是你最辉煌的一天（5场，胜率100.0%）。</p>
+</div><div class="chart-card full">
+<h3>📉 10场滚动胜率</h3>
+<div class="chart-wrap"><canvas id="chart-rolling-wr"></canvas></div>
+<p class="summary">近10场滚动胜率均值 51.0%，近期趋势下降。滚动胜率持续高于50%是上分的关键信号。</p>
+</div><div class="chart-card full">
+    <h3>🗺️ 游戏时段热力图（胜率）</h3>
+    <div id="heatmap-prime-time" style="overflow-x:auto"></div>
+    <p class="summary">🏆 最佳时段: 周三 4-5 (100.0%, 4场) | 💀 最差时段: 周六 2-3 (16.7%, 6场)。共 45 个有效时段（≥3场）</p>
+    </div><div class="chart-card full">
+    <h3>📊 对局数量热力图</h3>
+    <div id="heatmap-game-count" style="overflow-x:auto"></div>
+    <p class="summary">展示各时段的对局频次分布，颜色越深表示该时段对局越多。</p>
+    </div><div class="chart-card full">
+<h3>📈 段位LP趋势</h3>
+<div class="chart-wrap"><canvas id="chart-lp"></canvas></div>
+<p class="summary">排位趋势：断崖式下跌（最近10场与最初10场 LP 变化 -785）。 最近一次段位变更为 08/01 升入 白银。</p>
+</div><div class="chart-card full">
+<h3>📊 每日LP变化</h3>
+<div class="chart-wrap"><canvas id="chart-daily-lp"></canvas></div>
+<p class="summary">104 天有LP变化：56 天上涨，48 天下跌。绿色柱=上分日，红色柱=掉分日。</p>
+</div></div></section>
+</main>
+<footer>
+<p>由 <span>LOLhistory</span> 生成 · 共 500 场对局 · 导出时间 2026-06-09 17:20:49</p>
+<p style="margin-top:4px;font-size:11px">所有数据来源于 WeGame API，仅供个人参考。图表由 Chart.js 驱动。</p>
+</footer>
+<script>
+(function(){
+  var CDNS=[
+    'https://cdn.bootcdn.net/ajax/libs/Chart.js/4.4.1/chart.umd.min.js',
+    'https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js',
+    'https://unpkg.com/chart.js@4.4.7/dist/chart.umd.min.js',
+  ];
+  function tryCDN(i){
+    if(i>=CDNS.length){document.querySelectorAll('.chart-card .chart-wrap').forEach(function(el){el.innerHTML='<p style=color:#e74c3c;text-align:center;padding:20px>⚠ Chart.js 加载失败，请检查网络连接</p>';});return;}
+    var s=document.createElement('script');
+    s.src=CDNS[i];
+    s.onerror=function(){s.remove();tryCDN(i+1);};
+    s.onload=function(){initCharts();};
+    document.head.appendChild(s);
+  }
+  function initCharts(){
+    Chart.defaults.font.size=12;
+    Chart.defaults.font.family='"Microsoft YaHei","PingFang SC",sans-serif';
+new Chart(document.getElementById('chart-day'),{
+  type:'bar',
+  data:{labels:["周一", "周二", "周三", "周四", "周五", "周六", "周日"],
+    datasets:[
+      {label:'胜率 %',data:[55.8, 57.1, 54.7, 57.6, 51.9, 57.0, 69.4],backgroundColor:'rgba(74,158,255,0.7)',borderColor:'#4a9eff',borderWidth:1,yAxisID:'y'},
+      {label:'场次',data:[52, 70, 86, 66, 77, 100, 49],backgroundColor:'rgba(168,85,247,0.3)',borderColor:'#a855f7',borderWidth:1,yAxisID:'y1',type:'line',tension:0.3}
+    ]
+  },
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2,
+    plugins:{legend:{labels:{color:'#8b95a5'}}},
+    scales:{
+      y:{type:'linear',position:'left',title:{display:true,text:'胜率 %',color:'#8b95a5'},ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'},max:100},
+      y1:{type:'linear',position:'right',title:{display:true,text:'场次',color:'#8b95a5'},ticks:{color:'#8b95a5'},grid:{display:false}},
+      x:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}}
+    }
+  }
+});
+new Chart(document.getElementById('chart-hour'),{
+  type:'bar',
+  data:{labels:["0:00 (34场)", "1:00 (29场)", "2:00 (22场)", "3:00 (8场)", "4:00 (9场)", "5:00 (5场)", "6:00 (3场)", "7:00 (2场)", "8:00 (1场)", "9:00", "10:00 (2场)", "11:00 (4场)", "12:00 (4场)", "13:00 (4场)", "14:00 (13场)", "15:00 (15场)", "16:00 (20场)", "17:00 (25场)", "18:00 (27场)", "19:00 (33场)", "20:00 (62场)", "21:00 (66场)", "22:00 (62场)", "23:00 (50场)"],
+    datasets:[
+      {label:'胜率 %',data:[61.8, 62.1, 59.1, null, null, null, null, null, null, null, null, null, null, null, 61.5, 46.7, 65.0, 52.0, 66.7, 57.6, 54.8, 53.0, 59.7, 50.0],backgroundColor:'rgba(10,200,185,0.7)',borderColor:'#0ac8b9',borderWidth:1,yAxisID:'y'},
+      {label:'场次',data:[34, 29, 22, 8, 9, 5, 3, 2, 1, 0, 2, 4, 4, 4, 13, 15, 20, 25, 27, 33, 62, 66, 62, 50],backgroundColor:'rgba(168,85,247,0.3)',borderColor:'#a855f7',borderWidth:1,yAxisID:'y1',type:'line',tension:0.3}
+    ]
+  },
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2,
+    plugins:{legend:{labels:{color:'#8b95a5'}},tooltip:{callbacks:{label:function(ctx){if(ctx.datasetIndex===0&&ctx.raw===null)return'(场次不足，不显示胜率)';return ctx.dataset.label+': '+ctx.raw+'%';}}}},
+    scales:{
+      y:{type:'linear',position:'left',title:{display:true,text:'胜率 %',color:'#8b95a5'},ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'},max:100},
+      y1:{type:'linear',position:'right',ticks:{color:'#8b95a5'},grid:{display:false}},
+      x:{ticks:{color:'#8b95a5',maxRotation:45},grid:{color:'#2a3a4a'}}
+    }
+  }
+});
+new Chart(document.getElementById('chart-side'),{
+  type:'bar',
+  data:{labels:["蓝色方 (238场)", "红色方 (262场)"],
+    datasets:[
+      {label:'胜',data:[136, 149],backgroundColor:'rgba(46,204,113,0.7)',borderColor:'#2ecc71',borderWidth:1},
+      {label:'负',data:[102, 113],backgroundColor:'rgba(231,76,60,0.5)',borderColor:'#e74c3c',borderWidth:1}
+    ]
+  },
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2,
+    plugins:{legend:{labels:{color:'#8b95a5'}}},
+    scales:{y:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'},title:{display:true,text:'场次',color:'#8b95a5'}},x:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}}}
+  }
+});
+new Chart(document.getElementById('chart-position'),{
+  type:'bar',
+  data:{labels:["上单 (73场)", "打野 (65场)", "中单 (164场)", "ADC (59场)", "辅助 (38场)", "乱斗 (101场)"],
+    datasets:[{label:'胜率 %',data:[52.1, 64.6, 53.7, 61.0, 44.7, 63.4],backgroundColor:["rgba(74,158,255,0.8)", "rgba(168,85,247,0.8)", "rgba(245,158,11,0.8)", "rgba(20,184,166,0.8)", "rgba(236,72,153,0.8)", "rgba(46,204,113,0.8)"],borderColor:["rgba(74,158,255,1.0)", "rgba(168,85,247,1.0)", "rgba(245,158,11,1.0)", "rgba(20,184,166,1.0)", "rgba(236,72,153,1.0)", "rgba(46,204,113,1.0)"],borderWidth:1}]
+  },
+  options:{indexAxis:'y',responsive:true,maintainAspectRatio:true,aspectRatio:2,
+    plugins:{legend:{display:false}},
+    scales:{x:{max:100,ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}},y:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}}}
+  }
+});
+new Chart(document.getElementById('chart-lp-range'),{
+  type:'bar',
+  data:{labels:["0-20 LP (26场)", "20-40 LP (51场)", "40-60 LP (58场)", "60-80 LP (63场)", "80-100 LP (35场)"],
+    datasets:[{label:'胜率 %',data:[65.4, 58.8, 55.2, 58.7, 40.0],backgroundColor:'rgba(245,158,11,0.7)',borderColor:'#f59e0b',borderWidth:1}]
+  },
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2,plugins:{legend:{display:false}},
+    scales:{y:{max:100,ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}},x:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}}}
+  }
+});
+new Chart(document.getElementById('chart-duration'),{
+  type:'bar',
+  data:{labels:["<15min (7场)", "15-20min (63场)", "20-25min (85场)", "25-30min (156场)", "30-35min (146场)", "35min+ (43场)"],
+    datasets:[{label:'胜率 %',data:[71.4, 57.1, 58.8, 60.9, 52.7, 51.2],backgroundColor:'rgba(20,184,166,0.7)',borderColor:'#14b8a6',borderWidth:1}]
+  },
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2,plugins:{legend:{display:false}},
+    scales:{y:{max:100,ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}},x:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}}}
+  }
+});
+new Chart(document.getElementById('chart-mystery'),{
+  type:'bar',
+  data:{labels:["LP区间", "对局时长", "游戏时段", "位置", "星期几", "红蓝方"],
+    datasets:[{label:'胜率极差 %',data:[25.4, 20.2, 20.0, 19.9, 17.5, 0.2],backgroundColor:'rgba(236,72,153,0.7)',borderColor:'#ec4899',borderWidth:1}]
+  },
+  options:{indexAxis:'y',responsive:true,maintainAspectRatio:true,aspectRatio:2,plugins:{legend:{display:false}},
+    scales:{x:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}},y:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}}}
+  }
+});
+new Chart(document.getElementById('chart-honors'),{
+  type:'bar',
+  data:{labels:["击杀最多 (54场)", "助攻最多 (19场)", "金币最多 (1场)", "伤害最高 (76场)", "承受伤害最高 (37场)", "推塔最多 (41场)"],
+    datasets:[
+      {label:'获得荣誉',data:[100.0, 94.7, 100.0, 84.2, 32.4, 100.0],backgroundColor:'rgba(46,204,113,0.7)',borderColor:'#2ecc71',borderWidth:1},
+      {label:'未获得荣誉',data:[51.8, 55.5, 56.9, 52.1, 59.0, 53.2],backgroundColor:'rgba(231,76,60,0.4)',borderColor:'#e74c3c',borderWidth:1}
+    ]
+  },
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2,
+    plugins:{legend:{labels:{color:'#8b95a5'}}},
+    scales:{y:{max:100,ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}},x:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}}}
+  }
+});
+new Chart(document.getElementById('chart-radar'),{
+  type:'radar',
+  data:{labels:["KDA", "击杀", "助攻", "GPM", "评分", "生存率"],datasets:[{"label": "全对局平均", "data": [50.0, 50.0, 50.0, 50.0, 50.0, 50.0], "borderColor": "rgba(149,165,166,0.5)", "backgroundColor": "rgba(149,165,166,0.08)", "borderWidth": 1, "borderDash": [5, 5]}, {"label": "亚索 (78场, 55.1%)", "data": [43.1, 47.6, 45.5, 49.4, 44.0, 45.8], "borderColor": "rgba(74,158,255,0.8)", "backgroundColor": "rgba(74,158,255,0.2)", "borderWidth": 2}]},
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2.2,
+    plugins:{legend:{labels:{color:'#8b95a5'}}},
+    scales:{r:{min:0,max:100,ticks:{color:'#8b95a5',backdropColor:'transparent'},grid:{color:'#2a3a4a'},pointLabels:{color:'#8b95a5'}}}
+  }
+});
+new Chart(document.getElementById('chart-pool'),{
+  type:'bar',
+  data:{labels:["亚索 57%", "李青 53%", "劫 53%", "阿狸 54%", "伊泽瑞尔 52%", "金克丝 52%", "德莱厄斯 51%", "锐雯 53%", "锤石 50%", "蕾欧娜 52%", "易 54%", "卡特琳娜 50%", "薇恩 50%", "凯隐 53%", "艾瑞莉娅 47%"],
+    datasets:[
+      {label:'胜',data:[68, 45, 38, 30, 25, 21, 18, 16, 14, 13, 12, 10, 9, 8, 7],backgroundColor:'rgba(46,204,113,0.7)',borderColor:'#2ecc71',borderWidth:1},
+      {label:'负',data:[52, 40, 34, 25, 23, 19, 17, 14, 14, 12, 10, 10, 9, 7, 8],backgroundColor:'rgba(231,76,60,0.4)',borderColor:'#e74c3c',borderWidth:1}
+    ]
+  },
+  options:{indexAxis:'y',responsive:true,maintainAspectRatio:true,aspectRatio:2,
+    plugins:{legend:{labels:{color:'#8b95a5'}}},
+    scales:{x:{stacked:true,ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}},y:{stacked:true,ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}}}
+  }
+});
+new Chart(document.getElementById('chart-lp'),{
+  type:'line',
+  data:{labels:["03/15", "03/15", "03/17", "03/20", "04/03", "04/03", "04/04", "04/04", "04/07", "04/07", "04/08", "04/15", "04/15", "04/20", "04/22", "04/22", "04/22", "04/23", "04/29", "04/29", "04/29", "04/29", "04/29", "04/29", "04/30", "04/30", "05/01", "05/01", "05/01", "05/02", "05/03", "05/03", "05/03", "05/10", "05/10", "05/10", "05/10", "05/12", "05/18", "05/18", "05/18", "05/21", "05/22", "05/22", "05/22", "05/22", "05/24", "05/30", "06/01", "06/14", "06/17", "06/17", "06/18", "06/18", "06/22", "06/22", "06/22", "06/22", "06/23", "06/23", "06/23", "06/24", "06/26", "06/26", "06/26", "06/26", "06/27", "06/27", "06/27", "06/27", "07/02", "07/02", "07/03", "07/06", "07/09", "07/09", "07/10", "07/10", "07/10", "07/10", "07/10", "07/17", "07/20", "07/20", "07/20", "07/20", "07/20", "07/23", "07/23", "07/23", "07/24", "07/24", "07/27", "07/27", "07/30", "07/30", "07/30", "07/31", "08/01", "08/01", "08/01", "08/01", "08/01", "08/07", "08/07", "08/07", "08/07", "08/10", "08/10", "08/11", "08/12", "08/12", "08/12", "08/16", "08/16", "08/17", "08/17", "08/26", "08/26", "08/26", "08/27", "08/27", "08/28", "08/30", "08/30", "08/31", "08/31", "08/31", "08/31", "09/01", "09/02", "09/02", "09/03", "09/03", "09/04", "09/04", "09/04", "09/05", "09/07", "09/07", "09/08", "09/08", "09/08", "09/16", "09/16", "09/16", "09/20", "09/24", "09/24", "09/24", "09/25", "09/26", "09/26", "09/26", "09/26", "09/29", "09/29", "09/29", "09/29", "10/03", "10/03", "10/03", "10/03", "10/03", "10/03", "10/04", "10/04", "10/04", "10/05", "10/05", "10/08", "10/09", "10/09", "10/17", "10/22", "10/28", "10/30", "11/03", "11/03", "11/03", "11/09", "11/09", "11/10", "11/10", "11/13", "11/13", "11/13", "11/14", "11/15", "11/20", "11/24", "11/25", "11/26", "11/26", "11/26", "12/01", "12/01", "12/08", "12/08", "12/09", "12/09", "12/13", "12/13", "12/20", "12/20", "12/20", "12/26", "12/27", "01/02", "01/02", "01/02", "01/05", "01/05", "01/09", "01/09", "01/09", "01/09", "01/09", "01/11", "01/11", "01/12", "01/13", "01/15", "01/15", "01/16", "01/16", "01/16", "01/22", "01/23", "01/29", "02/06", "02/06", "02/06"],
+    datasets:[{label:'累计LP',data:[1620, 1634, 1649, 1661, 1645, 1629, 1614, 1629, 1643, 1659, 1645, 1630, 1612, 1624, 1608, 1623, 1613, 1615, 1633, 1619, 1634, 1650, 1666, 1680, 1662, 1650, 1662, 1647, 1659, 1671, 1686, 1698, 1225, 1241, 1233, 1241, 1225, 1240, 1254, 1264, 1279, 1293, 1272, 1284, 1270, 1262, 1248, 1233, 1248, 1260, 1252, 1268, 1278, 1292, 1277, 1293, 1278, 1260, 1278, 1264, 1276, 1292, 1274, 1294, 1276, 1290, 1286, 1270, 1256, 1240, 1255, 1235, 1220, 1202, 1215, 1231, 1215, 1208, 1218, 1233, 1251, 1233, 1218, 1208, 1222, 1236, 1221, 1203, 1219, 1203, 1217, 1232, 1248, 1266, 1282, 1266, 1278, 1293, 1278, 1294, 812, 824, 844, 830, 812, 802, 807, 821, 835, 843, 827, 813, 828, 812, 830, 852, 866, 881, 863, 881, 865, 853, 865, 853, 865, 881, 867, 879, 889, 870, 858, 836, 852, 868, 878, 892, 880, 865, 881, 866, 884, 880, 898, 888, 898, 888, 876, 861, 843, 855, 840, 852, 864, 849, 859, 877, 862, 874, 854, 868, 853, 839, 855, 833, 845, 833, 845, 827, 839, 855, 833, 847, 862, 852, 838, 820, 834, 849, 857, 877, 899, 885, 869, 884, 868, 856, 840, 854, 842, 827, 845, 863, 877, 863, 877, 892, 882, 867, 857, 843, 851, 863, 879, 865, 877, 892, 883, 863, 851, 837, 821, 839, 823, 835, 853, 865, 851, 835, 825, 807, 819, 831, 817, 832, 847, 865, 850, 836, 824, 844, 864, 879, 895],borderColor:'#c8aa6e',backgroundColor:'rgba(200,170,110,0.1)',fill:true,tension:0.2,pointRadius:0}]
+  },
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2.5,
+    plugins:{legend:{display:false}},
+    scales:{y:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'},title:{display:true,text:'综合LP',color:'#8b95a5'}},x:{ticks:{color:'#8b95a5',maxTicksLimit:30},grid:{color:'#2a3a4a'}}}
+  }
+});
+new Chart(document.getElementById('chart-season-stats'),{
+  type:'bar',
+  data:{labels:["S19", "S20", "S21", "S22", "S23", "S24", "S25", "S26"],
+    datasets:[
+      {label:'对局数量',data:[55, 64, 75, 66, 83, 90, 94, 248],backgroundColor:'rgba(74,158,255,0.6)',borderColor:'#4a9eff',borderWidth:1,yAxisID:'y',order:2},
+      {label:'胜率 %',data:[43.6, 50.0, 53.3, 51.5, 53.0, 52.2, 53.2, 55.6],borderColor:'#f59e0b',backgroundColor:'rgba(245,158,11,0.08)',borderWidth:2.5,pointRadius:5,pointBackgroundColor:'#f59e0b',pointBorderColor:'#f59e0b',yAxisID:'y1',type:'line',tension:0.3,fill:false,spanGaps:true,order:1}
+    ]
+  },
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2.5,
+    plugins:{legend:{labels:{color:'#8b95a5',usePointStyle:true}}},
+    scales:{
+      y:{type:'linear',position:'left',title:{display:true,text:'场次',color:'#8b95a5'},ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'},beginAtZero:true},
+      y1:{type:'linear',position:'right',title:{display:true,text:'胜率 %',color:'#8b95a5'},ticks:{color:'#8b95a5'},grid:{display:false},min:0,max:100},
+      x:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}}
+    }
+  }
+});
+new Chart(document.getElementById('chart-rolling-wr'),{
+  type:'line',
+  data:{labels:["03/15", "03/15", "03/17", "03/20", "04/03", "04/03", "04/04", "04/04", "04/07", "04/07", "04/08", "04/15", "04/15", "04/20", "04/22", "04/22", "04/22", "04/23", "04/29", "04/29", "04/29", "04/29", "04/29", "04/29", "04/30", "04/30", "05/01", "05/01", "05/01", "05/02", "05/03", "05/03", "05/03", "05/10", "05/10", "05/10", "05/10", "05/12", "05/18", "05/18", "05/18", "05/21", "05/22", "05/22", "05/22", "05/22", "05/24", "05/30", "06/01", "06/14", "06/17", "06/17", "06/18", "06/18", "06/22", "06/22", "06/22", "06/22", "06/23", "06/23", "06/23", "06/24", "06/26", "06/26", "06/26", "06/26", "06/27", "06/27", "06/27", "06/27", "07/02", "07/02", "07/03", "07/06", "07/09", "07/09", "07/10", "07/10", "07/10", "07/10", "07/10", "07/17", "07/20", "07/20", "07/20", "07/20", "07/20", "07/23", "07/23", "07/23", "07/24", "07/24", "07/27", "07/27", "07/30", "07/30", "07/30", "07/31", "08/01", "08/01", "08/01", "08/01", "08/01", "08/07", "08/07", "08/07", "08/07", "08/10", "08/10", "08/11", "08/12", "08/12", "08/12", "08/16", "08/16", "08/17", "08/17", "08/26", "08/26", "08/26", "08/27", "08/27", "08/28", "08/30", "08/30", "08/31", "08/31", "08/31", "08/31", "09/01", "09/02", "09/02", "09/03", "09/03", "09/04", "09/04", "09/04", "09/05", "09/07", "09/07", "09/08", "09/08", "09/08", "09/16", "09/16", "09/16", "09/20", "09/24", "09/24", "09/24", "09/25", "09/26", "09/26", "09/26", "09/26", "09/29", "09/29", "09/29", "09/29", "10/03", "10/03", "10/03", "10/03", "10/03", "10/03", "10/04", "10/04", "10/04", "10/05", "10/05", "10/08", "10/09", "10/09", "10/17", "10/22", "10/28", "10/30", "11/03", "11/03", "11/03", "11/09", "11/09", "11/10", "11/10", "11/13", "11/13", "11/13", "11/14", "11/15", "11/20", "11/24", "11/25", "11/26", "11/26", "11/26", "12/01", "12/01", "12/08", "12/08", "12/09", "12/09", "12/13", "12/13", "12/20", "12/20", "12/20", "12/26", "12/27", "01/02", "01/02", "01/02", "01/05", "01/05", "01/09", "01/09", "01/09", "01/09", "01/09", "01/11", "01/11", "01/12", "01/13", "01/15", "01/15", "01/16", "01/16", "01/16", "01/22", "01/23", "01/29", "02/06", "02/06", "02/06"],
+    datasets:[
+      {label:'10场滚动胜率',data:[100.0, 100.0, 100.0, 75.0, 60.0, 50.0, 57.1, 62.5, 66.7, 60.0, 50.0, 40.0, 40.0, 40.0, 50.0, 50.0, 40.0, 40.0, 30.0, 40.0, 50.0, 60.0, 60.0, 60.0, 50.0, 60.0, 60.0, 60.0, 70.0, 70.0, 70.0, 70.0, 70.0, 70.0, 80.0, 70.0, 80.0, 80.0, 80.0, 80.0, 80.0, 80.0, 80.0, 80.0, 70.0, 70.0, 60.0, 60.0, 60.0, 50.0, 50.0, 50.0, 50.0, 50.0, 60.0, 60.0, 60.0, 60.0, 50.0, 60.0, 60.0, 50.0, 50.0, 50.0, 50.0, 60.0, 70.0, 60.0, 60.0, 60.0, 50.0, 50.0, 40.0, 40.0, 40.0, 30.0, 20.0, 30.0, 40.0, 40.0, 40.0, 40.0, 40.0, 50.0, 50.0, 50.0, 50.0, 50.0, 40.0, 40.0, 50.0, 60.0, 70.0, 70.0, 60.0, 70.0, 80.0, 70.0, 80.0, 80.0, 80.0, 80.0, 70.0, 60.0, 60.0, 50.0, 40.0, 50.0, 50.0, 40.0, 30.0, 30.0, 30.0, 40.0, 50.0, 60.0, 70.0, 60.0, 60.0, 60.0, 60.0, 60.0, 60.0, 60.0, 60.0, 50.0, 50.0, 60.0, 60.0, 60.0, 60.0, 60.0, 70.0, 70.0, 70.0, 80.0, 70.0, 70.0, 60.0, 70.0, 80.0, 80.0, 70.0, 70.0, 60.0, 50.0, 50.0, 40.0, 50.0, 40.0, 40.0, 40.0, 40.0, 40.0, 50.0, 50.0, 60.0, 60.0, 60.0, 60.0, 50.0, 50.0, 50.0, 50.0, 40.0, 50.0, 40.0, 50.0, 50.0, 50.0, 60.0, 60.0, 60.0, 50.0, 50.0, 50.0, 60.0, 60.0, 60.0, 70.0, 60.0, 50.0, 60.0, 60.0, 60.0, 50.0, 50.0, 40.0, 30.0, 30.0, 40.0, 50.0, 40.0, 50.0, 60.0, 70.0, 60.0, 60.0, 60.0, 60.0, 60.0, 60.0, 60.0, 60.0, 60.0, 60.0, 60.0, 60.0, 60.0, 50.0, 50.0, 40.0, 50.0, 50.0, 50.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 50.0, 60.0, 60.0, 70.0, 70.0],borderColor:'#0ac8b9',tension:0.3,pointRadius:0,fill:false},
+      {label:'50% 基准线',data:[50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50],borderColor:'rgba(255,255,255,0.2)',borderDash:[5,5],pointRadius:0,fill:false}
+    ]
+  },
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2.5,
+    plugins:{legend:{labels:{color:'#8b95a5'}}},
+    scales:{y:{min:0,max:100,ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}},x:{ticks:{color:'#8b95a5',maxTicksLimit:30},grid:{color:'#2a3a4a'}}}
+  }
+});
+new Chart(document.getElementById('chart-daily-lp'),{
+  type:'bar',
+  data:{labels:["2026-03-15", "2026-03-17", "2026-03-20", "2026-04-03", "2026-04-07", "2026-04-08", "2026-04-15", "2026-04-20", "2026-04-22", "2026-04-23", "2026-04-29", "2026-04-30", "2026-05-01", "2026-05-02", "2026-05-03", "2026-05-12", "2026-05-18", "2026-05-21", "2026-05-22", "2026-05-24", "2026-05-30", "2026-06-01", "2026-06-14", "2026-06-17", "2026-06-18", "2026-06-22", "2026-06-23", "2026-06-24", "2026-06-26", "2026-06-27", "2026-07-02", "2026-07-03", "2026-07-06", "2026-07-09", "2026-07-10", "2026-07-17", "2026-07-20", "2026-07-23", "2026-07-24", "2026-07-27", "2026-07-30", "2026-07-31", "2026-08-01", "2026-08-07", "2026-08-10", "2026-08-11", "2026-08-12", "2026-08-16", "2026-08-17", "2026-08-26", "2026-08-27", "2026-08-28", "2026-08-31", "2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05", "2026-09-07", "2026-09-08", "2026-09-16", "2026-09-20", "2026-09-24", "2026-09-25", "2026-09-26", "2026-09-29", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-08", "2026-10-09", "2026-10-17", "2026-10-22", "2026-10-28", "2026-10-30", "2026-11-03", "2026-11-09", "2026-11-10", "2026-11-13", "2026-11-14", "2026-11-15", "2026-11-20", "2026-11-24", "2026-11-25", "2026-11-26", "2026-12-01", "2026-12-08", "2026-12-09", "2026-12-13", "2026-12-20", "2026-12-26", "2026-12-27", "2027-01-02", "2027-01-05", "2027-01-09", "2027-01-11", "2027-01-12", "2027-01-13", "2027-01-15", "2027-01-16", "2027-01-22", "2027-01-23", "2027-01-29", "2027-02-06"],
+    datasets:[{label:'LP变化',data:[14, 15, 12, -32, 30, -14, -33, 12, -11, 2, 65, -30, 9, 12, -446, 15, 39, 14, -31, -14, -15, 15, 12, 8, 24, -32, 16, 16, -2, -50, -5, -15, -18, 29, 20, -18, -12, -18, 29, 34, 12, 15, -449, -37, 28, 8, -15, 2, 36, 15, -28, 12, 24, -19, -34, 32, 12, -15, 1, 32, -10, -12, -21, -15, 19, -5, -9, -18, 28, -22, 29, -10, -14, -18, 14, 43, 8, -1, -44, 14, -12, -15, 18, 18, 14, 5, -25, -6, 28, 13, -9, -20, -42, 2, 12, -28, 12, 12, 1, 18, -14, -12, 20, 51],backgroundColor:["rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(231,76,60,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(231,76,60,0.7)", "rgba(231,76,60,0.7)", "rgba(231,76,60,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(231,76,60,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(231,76,60,0.7)", "rgba(231,76,60,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(231,76,60,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(231,76,60,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(231,76,60,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)"],borderWidth:0}]
+  },
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2.5,
+    plugins:{legend:{display:false}},
+    scales:{y:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'},title:{display:true,text:'LP变化',color:'#8b95a5'}},x:{ticks:{color:'#8b95a5',maxTicksLimit:20},grid:{color:'#2a3a4a'}}}
+  }
+});
+new Chart(document.getElementById('chart-session-size'),{
+  type:'bar',
+  data:{labels:[1, 2, 3, 4, 5, 6, 7],
+    datasets:[{label:'次数',data:[45, 21, 29, 33, 17, 10, 7],backgroundColor:'rgba(74,158,255,0.7)',borderColor:'#4a9eff',borderWidth:1}]
+  },
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2,plugins:{legend:{display:false}},
+    scales:{y:{ticks:{color:'#8b95a5',stepSize:1},grid:{color:'#2a3a4a'},title:{display:true,text:'次数',color:'#8b95a5'}},x:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'},title:{display:true,text:'每轮游戏局数',color:'#8b95a5'}}}
+  }
+});
+new Chart(document.getElementById('chart-session-first-hour'),{
+  type:'bar',
+  data:{labels:["0:00", "1:00", "2:00", "3:00", "4:00", "5:00", "6:00", "7:00", "8:00", "9:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00", "23:00"],
+    datasets:[{label:'次数',data:[0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 3, 1, 2, 8, 8, 8, 12, 13, 15, 32, 35, 13, 8],backgroundColor:'rgba(245,158,11,0.7)',borderColor:'#f59e0b',borderWidth:1}]
+  },
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2,plugins:{legend:{display:false}},
+    scales:{y:{ticks:{color:'#8b95a5',stepSize:1},grid:{color:'#2a3a4a'},title:{display:true,text:'次数',color:'#8b95a5'}},x:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}}}
+  }
+});
+new Chart(document.getElementById('chart-session-last-hour'),{
+  type:'bar',
+  data:{labels:["0:00", "1:00", "2:00", "3:00", "4:00", "5:00", "6:00", "7:00", "8:00", "9:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00", "23:00"],
+    datasets:[{label:'次数',data:[8, 13, 13, 3, 5, 2, 2, 2, 1, 0, 1, 0, 0, 1, 2, 5, 6, 10, 3, 7, 18, 21, 19, 18],backgroundColor:'rgba(168,85,247,0.7)',borderColor:'#a855f7',borderWidth:1}]
+  },
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2,plugins:{legend:{display:false}},
+    scales:{y:{ticks:{color:'#8b95a5',stepSize:1},grid:{color:'#2a3a4a'},title:{display:true,text:'次数',color:'#8b95a5'}},x:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}}}
+  }
+});
+new Chart(document.getElementById('chart-cal-heatmap'),{
+  type:'bar',
+  data:{labels:["2026-03-15", "2026-03-17", "2026-03-20", "2026-03-21", "2026-03-24", "2026-03-26", "2026-03-27", "2026-03-29", "2026-03-31", "2026-04-01", "2026-04-02", "2026-04-03", "2026-04-04", "2026-04-07", "2026-04-08", "2026-04-09", "2026-04-10", "2026-04-11", "2026-04-13", "2026-04-14", "2026-04-15", "2026-04-17", "2026-04-18", "2026-04-20", "2026-04-22", "2026-04-23", "2026-04-25", "2026-04-28", "2026-04-29", "2026-04-30", "2026-05-01", "2026-05-02", "2026-05-03", "2026-05-07", "2026-05-08", "2026-05-10", "2026-05-11", "2026-05-12", "2026-05-15", "2026-05-16", "2026-05-18", "2026-05-19", "2026-05-20", "2026-05-21", "2026-05-22", "2026-05-24", "2026-05-26", "2026-05-30", "2026-06-01", "2026-06-02", "2026-06-03", "2026-06-06", "2026-06-07", "2026-06-08", "2026-06-09", "2026-06-11", "2026-06-14", "2026-06-17", "2026-06-18", "2026-06-22", "2026-06-23", "2026-06-24", "2026-06-25", "2026-06-26", "2026-06-27", "2026-06-30", "2026-07-02", "2026-07-03", "2026-07-06", "2026-07-09", "2026-07-10", "2026-07-11", "2026-07-14", "2026-07-17", "2026-07-20", "2026-07-23", "2026-07-24", "2026-07-25", "2026-07-27", "2026-07-30", "2026-07-31", "2026-08-01", "2026-08-05", "2026-08-07", "2026-08-10", "2026-08-11", "2026-08-12", "2026-08-16", "2026-08-17", "2026-08-19", "2026-08-20", "2026-08-22", "2026-08-24", "2026-08-26", "2026-08-27", "2026-08-28", "2026-08-30", "2026-08-31", "2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05", "2026-09-07", "2026-09-08", "2026-09-09", "2026-09-12", "2026-09-16", "2026-09-17", "2026-09-18", "2026-09-20", "2026-09-22", "2026-09-24", "2026-09-25", "2026-09-26", "2026-09-29", "2026-09-30", "2026-10-01", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-12", "2026-10-14", "2026-10-17", "2026-10-18", "2026-10-22", "2026-10-25", "2026-10-28", "2026-10-30", "2026-11-01", "2026-11-03", "2026-11-04", "2026-11-07", "2026-11-09", "2026-11-10", "2026-11-13", "2026-11-14", "2026-11-15", "2026-11-18", "2026-11-20", "2026-11-22", "2026-11-24", "2026-11-25", "2026-11-26", "2026-11-28", "2026-12-01", "2026-12-03", "2026-12-04", "2026-12-07", "2026-12-08", "2026-12-09", "2026-12-12", "2026-12-13", "2026-12-17", "2026-12-18", "2026-12-20", "2026-12-23", "2026-12-24", "2026-12-26", "2026-12-27", "2026-12-30", "2027-01-02", "2027-01-03", "2027-01-05", "2027-01-09", "2027-01-11", "2027-01-12", "2027-01-13", "2027-01-15", "2027-01-16", "2027-01-17", "2027-01-19", "2027-01-20", "2027-01-22", "2027-01-23", "2027-01-26", "2027-01-29", "2027-01-30", "2027-01-31", "2027-02-02", "2027-02-03", "2027-02-04", "2027-02-06", "2027-02-08", "2027-02-09", "2027-02-11"],
+    datasets:[{label:'场次',data:[2, 1, 2, 5, 5, 2, 2, 2, 3, 3, 3, 2, 6, 2, 1, 1, 6, 3, 2, 2, 2, 3, 2, 3, 3, 1, 3, 2, 7, 2, 3, 1, 3, 3, 1, 4, 1, 2, 3, 3, 3, 3, 4, 1, 4, 5, 1, 1, 1, 3, 2, 6, 3, 2, 1, 3, 1, 5, 2, 4, 3, 1, 3, 4, 4, 2, 2, 2, 1, 2, 5, 4, 1, 1, 5, 3, 6, 4, 2, 3, 1, 6, 1, 4, 2, 3, 3, 2, 3, 2, 3, 1, 4, 3, 2, 1, 2, 5, 3, 6, 3, 3, 5, 3, 3, 3, 1, 3, 3, 2, 1, 1, 3, 1, 4, 4, 5, 2, 6, 3, 2, 1, 2, 2, 1, 4, 1, 1, 1, 1, 1, 3, 1, 4, 3, 6, 2, 2, 3, 2, 1, 2, 1, 5, 1, 2, 3, 4, 2, 2, 5, 1, 2, 2, 1, 2, 4, 1, 4, 7, 2, 1, 1, 1, 3, 1, 2, 5, 2, 1, 2, 2, 4, 1, 2, 5, 2, 1, 5, 2, 4, 3, 2, 2, 1, 3, 3, 2, 4],backgroundColor:["rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(231,76,60,0.8)", "rgba(231,76,60,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(231,76,60,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(231,76,60,0.8)", "rgba(231,76,60,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(231,76,60,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(231,76,60,0.8)", "rgba(231,76,60,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(231,76,60,0.8)", "rgba(46,204,113,0.8)", "rgba(46,204,113,0.8)"],borderWidth:0}]
+  },
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:3,
+    plugins:{legend:{display:false},tooltip:{callbacks:{label:function(ctx){var wr=[100.0, 100.0, 50.0, 100.0, 60.0, 100.0, 100.0, 100.0, 33.3, 33.3, 66.7, 0.0, 66.7, 50.0, 0.0, 0.0, 33.3, 33.3, 50.0, 50.0, 50.0, 66.7, 0.0, 33.3, 33.3, 100.0, 33.3, 100.0, 57.1, 50.0, 66.7, 100.0, 100.0, 33.3, 0.0, 50.0, 100.0, 50.0, 100.0, 33.3, 100.0, 100.0, 100.0, 100.0, 25.0, 60.0, 0.0, 100.0, 100.0, 66.7, 0.0, 83.3, 66.7, 0.0, 0.0, 66.7, 0.0, 100.0, 50.0, 50.0, 66.7, 0.0, 66.7, 75.0, 50.0, 0.0, 0.0, 50.0, 0.0, 50.0, 60.0, 25.0, 0.0, 0.0, 40.0, 66.7, 33.3, 75.0, 100.0, 66.7, 0.0, 66.7, 0.0, 0.0, 100.0, 66.7, 33.3, 100.0, 100.0, 50.0, 33.3, 100.0, 75.0, 33.3, 50.0, 0.0, 100.0, 80.0, 33.3, 33.3, 66.7, 66.7, 60.0, 33.3, 66.7, 66.7, 0.0, 33.3, 66.7, 50.0, 0.0, 0.0, 33.3, 100.0, 75.0, 50.0, 40.0, 100.0, 33.3, 66.7, 50.0, 0.0, 100.0, 50.0, 100.0, 50.0, 0.0, 100.0, 0.0, 0.0, 100.0, 100.0, 100.0, 75.0, 66.7, 50.0, 0.0, 50.0, 33.3, 50.0, 0.0, 50.0, 100.0, 80.0, 100.0, 100.0, 66.7, 75.0, 50.0, 100.0, 60.0, 0.0, 0.0, 100.0, 100.0, 50.0, 50.0, 100.0, 75.0, 71.4, 50.0, 0.0, 0.0, 0.0, 33.3, 100.0, 50.0, 40.0, 0.0, 100.0, 50.0, 100.0, 50.0, 100.0, 100.0, 60.0, 50.0, 100.0, 60.0, 50.0, 50.0, 66.7, 50.0, 100.0, 0.0, 100.0, 33.3, 100.0, 50.0];return ctx.raw+'场 — 胜率 '+wr[ctx.dataIndex]+'%';}}}},
+    scales:{y:{ticks:{color:'#8b95a5',stepSize:1},grid:{color:'#2a3a4a'}},x:{ticks:{color:'#8b95a5',maxTicksLimit:25,maxRotation:45},grid:{color:'#2a3a4a'}}}
+  }
+});
+new Chart(document.getElementById('chart-session-pos'),{
+  type:'bar',
+  data:{labels:["第1局 (162场)", "第2局 (117场)", "第3局 (96场)", "第4局 (67场)", "第5局 (34场)", "第6局 (17场)", "第7局 (7场)"],
+    datasets:[{label:'胜率 %',data:[54.3, 60.7, 59.4, 58.2, 52.9, 52.9, 42.9],backgroundColor:'rgba(20,184,166,0.7)',borderColor:'#14b8a6',borderWidth:1}]
+  },
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2,plugins:{legend:{display:false}},
+    scales:{y:{max:100,ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}},x:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}}}
+  }
+});
+new Chart(document.getElementById('chart-tilt'),{
+  type:'bar',
+  data:{labels:["赢后", "输后", "连赢2局后", "连输2局后"],
+    datasets:[{label:'胜率 %',data:[58.5, 54.9, 58.4, 59.8],backgroundColor:["rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)", "rgba(46,204,113,0.9)", "rgba(231,76,60,0.9)"],borderColor:["#2ecc71", "#e74c3c", "#1ea853", "#c0392b"],borderWidth:1}]
+  },
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2,plugins:{legend:{display:false}},
+    scales:{y:{max:100,ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}},x:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}}}
+  }
+});
+new Chart(document.getElementById('chart-streaks'),{
+  type:'bar',
+  data:{labels:["1局", "2局", "3局", "4局", "5局", "6局", "7局", "9局", "12局"],
+    datasets:[
+      {label:'连胜',data:[50, 27, 16, 15, 3, 5, 1, 1, 1],backgroundColor:'rgba(46,204,113,0.7)',borderColor:'#2ecc71',borderWidth:1},
+      {label:'连败',data:[60, 35, 12, 7, 3, 1, 0, 0, 0],backgroundColor:'rgba(231,76,60,0.7)',borderColor:'#e74c3c',borderWidth:1}
+    ]
+  },
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2,
+    plugins:{legend:{labels:{color:'#8b95a5'}}},
+    scales:{y:{ticks:{color:'#8b95a5',stepSize:1},grid:{color:'#2a3a4a'}},x:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}}}
+  }
+});
+new Chart(document.getElementById('chart-consistency'),{
+  type:'bar',
+  data:{labels:["0-1", "1-2", "2-3", "3-5", "5-10", "10+"],
+    datasets:[{label:'场次',data:[21, 42, 36, 55, 53, 26],backgroundColor:'rgba(74,158,255,0.7)',borderColor:'#4a9eff',borderWidth:1}]
+  },
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2,plugins:{legend:{display:false}},
+    scales:{y:{ticks:{color:'#8b95a5',stepSize:1},grid:{color:'#2a3a4a'},title:{display:true,text:'场次',color:'#8b95a5'}},x:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'},title:{display:true,text:'KDA',color:'#8b95a5'}}}
+  }
+});
+new Chart(document.getElementById('chart-surrender'),{
+  type:'bar',
+  data:{labels:['对方投降(赢)','我方投降(输)','战斗到结束'],
+    datasets:[{label:'场次',data:[0,26,474],backgroundColor:['rgba(46,204,113,0.7)','rgba(231,76,60,0.7)','rgba(74,158,255,0.7)'],borderColor:['#2ecc71','#e74c3c','#4a9eff'],borderWidth:1}]
+  },
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2,plugins:{legend:{display:false}},
+    scales:{y:{ticks:{color:'#8b95a5',stepSize:1},grid:{color:'#2a3a4a'},title:{display:true,text:'场次',color:'#8b95a5'}},x:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}}}
+  }
+});
+new Chart(document.getElementById('chart-afk'),{
+  type:'bar',
+  data:{labels:['挂机场次','正常场次'],
+    datasets:[{label:'胜率 %',data:[50.0,57.1],backgroundColor:['rgba(231,76,60,0.7)','rgba(46,204,113,0.7)'],borderColor:['#e74c3c','#2ecc71'],borderWidth:1}]
+  },
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2,plugins:{legend:{display:false}},
+    scales:{y:{max:100,ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}},x:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}}}
+  }
+});
+new Chart(document.getElementById('chart-gpm'),{
+  type:'scatter',
+  data:{datasets:[
+    {label:'胜',data:[{"x": 26.2, "y": 391}, {"x": 30.9, "y": 403}, {"x": 30.9, "y": 347}, {"x": 32.2, "y": 388}, {"x": 24.6, "y": 324}, {"x": 32.2, "y": 377}, {"x": 30.8, "y": 312}, {"x": 28.4, "y": 359}, {"x": 27.8, "y": 319}, {"x": 32.4, "y": 377}, {"x": 29.8, "y": 378}, {"x": 31.7, "y": 346}, {"x": 28.4, "y": 366}, {"x": 35.0, "y": 406}, {"x": 21.8, "y": 340}, {"x": 23.4, "y": 410}, {"x": 28.0, "y": 336}, {"x": 37.0, "y": 371}, {"x": 27.4, "y": 378}, {"x": 33.2, "y": 324}, {"x": 36.6, "y": 317}, {"x": 39.2, "y": 397}, {"x": 32.6, "y": 367}, {"x": 32.2, "y": 392}, {"x": 17.3, "y": 384}, {"x": 29.5, "y": 379}, {"x": 32.8, "y": 419}, {"x": 33.2, "y": 368}, {"x": 33.4, "y": 348}, {"x": 34.2, "y": 372}, {"x": 26.2, "y": 343}, {"x": 24.6, "y": 384}, {"x": 27.6, "y": 357}, {"x": 30.2, "y": 349}, {"x": 26.8, "y": 397}, {"x": 29.8, "y": 344}, {"x": 36.1, "y": 328}, {"x": 23.8, "y": 361}, {"x": 24.1, "y": 346}, {"x": 21.8, "y": 326}, {"x": 29.5, "y": 388}, {"x": 19.4, "y": 323}, {"x": 28.2, "y": 396}, {"x": 27.3, "y": 362}, {"x": 40.1, "y": 305}, {"x": 34.6, "y": 380}, {"x": 33.3, "y": 313}, {"x": 27.9, "y": 401}, {"x": 28.6, "y": 366}, {"x": 36.5, "y": 373}, {"x": 27.6, "y": 396}, {"x": 29.9, "y": 365}, {"x": 24.3, "y": 414}, {"x": 26.8, "y": 344}, {"x": 27.4, "y": 420}, {"x": 40.9, "y": 339}, {"x": 28.2, "y": 336}, {"x": 13.9, "y": 329}, {"x": 33.5, "y": 324}, {"x": 19.8, "y": 320}, {"x": 26.4, "y": 419}, {"x": 29.4, "y": 366}, {"x": 29.0, "y": 321}, {"x": 25.4, "y": 383}, {"x": 29.6, "y": 305}, {"x": 34.9, "y": 393}, {"x": 24.2, "y": 355}, {"x": 32.9, "y": 406}, {"x": 18.7, "y": 302}, {"x": 34.5, "y": 311}, {"x": 17.1, "y": 398}, {"x": 31.5, "y": 341}, {"x": 29.7, "y": 417}, {"x": 37.1, "y": 414}, {"x": 27.4, "y": 396}, {"x": 26.7, "y": 313}, {"x": 34.1, "y": 369}, {"x": 32.6, "y": 304}, {"x": 29.1, "y": 358}, {"x": 30.4, "y": 326}, {"x": 26.4, "y": 410}, {"x": 21.1, "y": 317}, {"x": 29.0, "y": 357}, {"x": 30.2, "y": 350}, {"x": 28.7, "y": 394}, {"x": 33.2, "y": 322}, {"x": 34.6, "y": 349}, {"x": 31.0, "y": 354}, {"x": 34.8, "y": 375}, {"x": 27.8, "y": 355}, {"x": 33.7, "y": 408}, {"x": 27.6, "y": 333}, {"x": 27.8, "y": 419}, {"x": 30.8, "y": 315}, {"x": 28.0, "y": 341}, {"x": 31.4, "y": 315}, {"x": 26.4, "y": 375}, {"x": 24.6, "y": 326}, {"x": 31.1, "y": 330}, {"x": 26.9, "y": 388}, {"x": 14.8, "y": 310}, {"x": 23.8, "y": 378}, {"x": 29.0, "y": 361}, {"x": 34.2, "y": 301}, {"x": 24.6, "y": 381}, {"x": 30.8, "y": 420}, {"x": 27.3, "y": 348}, {"x": 34.5, "y": 349}, {"x": 20.8, "y": 327}, {"x": 34.9, "y": 386}, {"x": 30.0, "y": 362}, {"x": 28.0, "y": 354}, {"x": 27.1, "y": 363}, {"x": 17.9, "y": 354}, {"x": 28.6, "y": 308}, {"x": 27.1, "y": 318}, {"x": 27.9, "y": 398}, {"x": 28.8, "y": 319}, {"x": 23.4, "y": 318}, {"x": 29.0, "y": 377}, {"x": 37.2, "y": 404}, {"x": 30.2, "y": 376}, {"x": 27.2, "y": 370}, {"x": 26.6, "y": 332}, {"x": 29.8, "y": 394}, {"x": 31.0, "y": 327}, {"x": 31.9, "y": 404}, {"x": 27.1, "y": 306}, {"x": 26.3, "y": 354}, {"x": 32.1, "y": 338}],backgroundColor:'rgba(46,204,113,0.5)',borderColor:'#2ecc71',pointRadius:3},
+    {label:'负',data:[{"x": 22.8, "y": 337}, {"x": 30.4, "y": 339}, {"x": 30.2, "y": 307}, {"x": 34.5, "y": 340}, {"x": 24.0, "y": 338}, {"x": 28.4, "y": 337}, {"x": 35.7, "y": 294}, {"x": 44.5, "y": 319}, {"x": 29.2, "y": 253}, {"x": 29.4, "y": 293}, {"x": 19.5, "y": 308}, {"x": 37.1, "y": 342}, {"x": 13.4, "y": 326}, {"x": 40.6, "y": 289}, {"x": 16.1, "y": 260}, {"x": 27.4, "y": 320}, {"x": 27.8, "y": 301}, {"x": 30.8, "y": 267}, {"x": 29.4, "y": 350}, {"x": 27.2, "y": 279}, {"x": 21.3, "y": 280}, {"x": 33.9, "y": 308}, {"x": 35.8, "y": 315}, {"x": 14.6, "y": 336}, {"x": 31.2, "y": 343}, {"x": 22.3, "y": 294}, {"x": 32.2, "y": 338}, {"x": 26.1, "y": 315}, {"x": 26.3, "y": 297}, {"x": 31.1, "y": 220}, {"x": 30.3, "y": 252}, {"x": 30.7, "y": 273}, {"x": 30.9, "y": 319}, {"x": 26.8, "y": 270}, {"x": 26.9, "y": 284}, {"x": 37.3, "y": 229}, {"x": 24.4, "y": 257}, {"x": 28.8, "y": 261}, {"x": 26.4, "y": 241}, {"x": 32.6, "y": 327}, {"x": 36.6, "y": 240}, {"x": 32.3, "y": 265}, {"x": 31.4, "y": 341}, {"x": 28.6, "y": 336}, {"x": 27.2, "y": 302}, {"x": 31.3, "y": 232}, {"x": 20.3, "y": 275}, {"x": 30.7, "y": 259}, {"x": 27.1, "y": 270}, {"x": 29.2, "y": 298}, {"x": 30.8, "y": 227}, {"x": 32.6, "y": 242}, {"x": 30.1, "y": 245}, {"x": 35.4, "y": 333}, {"x": 25.1, "y": 273}, {"x": 20.9, "y": 304}, {"x": 31.1, "y": 266}, {"x": 37.8, "y": 290}, {"x": 28.1, "y": 295}, {"x": 19.2, "y": 295}, {"x": 31.0, "y": 305}, {"x": 24.6, "y": 297}, {"x": 32.4, "y": 349}, {"x": 30.6, "y": 294}, {"x": 35.0, "y": 311}, {"x": 30.7, "y": 349}, {"x": 36.6, "y": 296}, {"x": 29.6, "y": 288}, {"x": 37.8, "y": 270}, {"x": 29.9, "y": 268}, {"x": 33.6, "y": 233}, {"x": 30.4, "y": 287}, {"x": 35.1, "y": 292}, {"x": 28.3, "y": 267}, {"x": 24.3, "y": 335}, {"x": 26.5, "y": 307}, {"x": 32.7, "y": 257}, {"x": 32.0, "y": 318}, {"x": 19.6, "y": 327}, {"x": 30.1, "y": 305}, {"x": 18.2, "y": 312}, {"x": 25.2, "y": 248}, {"x": 30.3, "y": 273}, {"x": 22.4, "y": 314}, {"x": 18.8, "y": 231}, {"x": 26.5, "y": 342}, {"x": 29.3, "y": 251}, {"x": 36.2, "y": 279}, {"x": 29.5, "y": 338}, {"x": 34.1, "y": 269}, {"x": 34.8, "y": 331}, {"x": 35.4, "y": 273}, {"x": 28.1, "y": 285}, {"x": 30.1, "y": 241}, {"x": 29.2, "y": 347}, {"x": 33.1, "y": 309}, {"x": 26.4, "y": 227}, {"x": 23.3, "y": 328}, {"x": 37.1, "y": 267}, {"x": 28.4, "y": 311}, {"x": 23.9, "y": 322}, {"x": 30.5, "y": 274}, {"x": 28.7, "y": 222}],backgroundColor:'rgba(231,76,60,0.5)',borderColor:'#e74c3c',pointRadius:3}
+  ]},
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2,
+    plugins:{legend:{labels:{color:'#8b95a5'}}},
+    scales:{y:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'},title:{display:true,text:'GPM (每分钟金币)',color:'#8b95a5'}},x:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'},title:{display:true,text:'对局时长 (分钟)',color:'#8b95a5'}}}
+  }
+});
+new Chart(document.getElementById('chart-boomerang'),{
+  type:'scatter',
+  data:{datasets:[
+    {label:'MVP后下一局',data:[{"x": 17687, "y": 47598}, {"x": 17707, "y": 3037}, {"x": 23563, "y": 9857}, {"x": 63202, "y": 22967}, {"x": 29398, "y": 52130}, {"x": 52130, "y": 864}, {"x": 20255, "y": 1936}, {"x": 27362, "y": 54698}, {"x": 41083, "y": 44339}, {"x": 23541, "y": 2118}, {"x": 16343, "y": 35298}, {"x": 80700, "y": 9870}, {"x": 23487, "y": 13110}, {"x": 21768, "y": 22623}, {"x": 22623, "y": 22818}, {"x": 28042, "y": 13765}, {"x": 34586, "y": 24468}, {"x": 26574, "y": 13803}, {"x": 33949, "y": 7076}, {"x": 23543, "y": 7289}, {"x": 26975, "y": 23136}, {"x": 23136, "y": 21560}, {"x": 63772, "y": 4617}, {"x": 14667, "y": 19012}, {"x": 19012, "y": 2566}, {"x": 22228, "y": 13135}, {"x": 17678, "y": 8557}, {"x": 20251, "y": 46884}, {"x": 22240, "y": 49485}, {"x": 15216, "y": 4094}, {"x": 31341, "y": 54119}, {"x": 30430, "y": 18315}, {"x": 17920, "y": 5970}, {"x": 17035, "y": 12469}, {"x": 24607, "y": 13577}, {"x": 23322, "y": 46937}, {"x": 27926, "y": 3607}, {"x": 28931, "y": 7074}, {"x": 22194, "y": 7387}, {"x": 24767, "y": 34593}, {"x": 72290, "y": 6810}, {"x": 64456, "y": 8998}, {"x": 15711, "y": 19124}, {"x": 22168, "y": 2235}, {"x": 59291, "y": 17095}, {"x": 29429, "y": 14450}, {"x": 64509, "y": 6903}, {"x": 19756, "y": 11195}, {"x": 30002, "y": 6092}, {"x": 59238, "y": 6568}, {"x": 18359, "y": 63833}],backgroundColor:'rgba(245,158,11,0.6)',borderColor:'#f59e0b',pointRadius:4},
+    {label:'SVP/惨败后下一局',data:[{"x": 788, "y": 7589}, {"x": 574, "y": 6218}, {"x": 864, "y": 4077}, {"x": 842, "y": 7043}, {"x": 14457, "y": 9692}, {"x": 1404, "y": 4874}, {"x": 912, "y": 13137}, {"x": 7431, "y": 22690}, {"x": 1148, "y": 33949}, {"x": 1439, "y": 7347}, {"x": 1591, "y": 11168}, {"x": 24055, "y": 15676}, {"x": 1960, "y": 18318}, {"x": 1432, "y": 17854}, {"x": 81, "y": 35908}],backgroundColor:'rgba(231,76,60,0.6)',borderColor:'#e74c3c',pointRadius:4},
+    {label:'普通对局后',data:[{"x": 15290, "y": 9261}, {"x": 3736, "y": 13135}, {"x": 13135, "y": 57314}, {"x": 57314, "y": 6217}, {"x": 6217, "y": 28060}, {"x": 28060, "y": 8080}, {"x": 8080, "y": 17013}, {"x": 18492, "y": 51439}, {"x": 51439, "y": 9652}, {"x": 9652, "y": 5057}, {"x": 5057, "y": 1408}, {"x": 11342, "y": 40417}, {"x": 40417, "y": 17687}, {"x": 37798, "y": 25463}, {"x": 7298, "y": 22464}, {"x": 22464, "y": 8109}, {"x": 8109, "y": 16404}, {"x": 16404, "y": 6593}, {"x": 6593, "y": 4600}, {"x": 9873, "y": 8732}, {"x": 8732, "y": 16360}, {"x": 3683, "y": 5092}, {"x": 5092, "y": 15111}, {"x": 15111, "y": 15312}, {"x": 20216, "y": 11928}, {"x": 11928, "y": 24157}, {"x": 24157, "y": 5082}, {"x": 3037, "y": 3181}, {"x": 7589, "y": 23563}, {"x": 9857, "y": 5108}, {"x": 5108, "y": 11995}, {"x": 11995, "y": 10712}, {"x": 17521, "y": 574}, {"x": 9554, "y": 63202}, {"x": 22967, "y": 7900}, {"x": 7755, "y": 31323}, {"x": 4077, "y": 714}, {"x": 6104, "y": 20255}, {"x": 22232, "y": 4141}, {"x": 4141, "y": 3733}, {"x": 3733, "y": 29364}, {"x": 22419, "y": 842}, {"x": 54698, "y": 5188}, {"x": 5086, "y": 13158}, {"x": 13158, "y": 7945}, {"x": 7945, "y": 9891}, {"x": 9891, "y": 11183}, {"x": 11183, "y": 10559}, {"x": 3626, "y": 27042}, {"x": 8043, "y": 22844}, {"x": 22844, "y": 17674}, {"x": 17674, "y": 13978}, {"x": 17078, "y": 41083}, {"x": 4078, "y": 23541}, {"x": 2118, "y": 1655}, {"x": 9692, "y": 2541}, {"x": 2541, "y": 17751}, {"x": 17751, "y": 11232}, {"x": 1560, "y": 69054}, {"x": 35298, "y": 9928}, {"x": 9928, "y": 32012}, {"x": 32012, "y": 5696}, {"x": 5696, "y": 4384}, {"x": 29413, "y": 13943}, {"x": 13943, "y": 26144}, {"x": 18344, "y": 39789}, {"x": 39789, "y": 80700}, {"x": 9870, "y": 23487}, {"x": 13110, "y": 16356}, {"x": 31378, "y": 39366}, {"x": 39366, "y": 9427}, {"x": 9427, "y": 12583}, {"x": 12583, "y": 15582}, {"x": 22818, "y": 5823}, {"x": 5823, "y": 66}, {"x": 16338, "y": 60574}, {"x": 60574, "y": 7579}, {"x": 7579, "y": 4942}, {"x": 4942, "y": 13716}, {"x": 4889, "y": 15033}, {"x": 15033, "y": 16991}, {"x": 16991, "y": 16394}, {"x": 16394, "y": 28042}, {"x": 13765, "y": 26735}, {"x": 2618, "y": 10245}, {"x": 10245, "y": 1404}, {"x": 18328, "y": 17630}, {"x": 17630, "y": 1633}, {"x": 24468, "y": 16016}, {"x": 16016, "y": 6355}, {"x": 6355, "y": 14682}, {"x": 19627, "y": 5959}, {"x": 17036, "y": 3104}, {"x": 3104, "y": 912}, {"x": 13137, "y": 3049}, {"x": 3049, "y": 26574}, {"x": 22439, "y": 7431}, {"x": 20260, "y": 2785}, {"x": 2785, "y": 6399}, {"x": 6399, "y": 16784}, {"x": 8156, "y": 3388}, {"x": 3388, "y": 10082}, {"x": 10082, "y": 30630}, {"x": 5682, "y": 4037}, {"x": 4078, "y": 1148}, {"x": 28744, "y": 5698}, {"x": 5698, "y": 8072}, {"x": 8072, "y": 28077}, {"x": 28077, "y": 20958}, {"x": 20958, "y": 18370}, {"x": 18370, "y": 1076}, {"x": 7347, "y": 8609}, {"x": 8609, "y": 2572}, {"x": 3902, "y": 48885}, {"x": 48885, "y": 15094}, {"x": 15094, "y": 4375}, {"x": 4375, "y": 22063}, {"x": 43685, "y": 7686}, {"x": 7686, "y": 4726}, {"x": 4726, "y": 24841}, {"x": 24841, "y": 55391}, {"x": 7563, "y": 9618}, {"x": 9618, "y": 1591}, {"x": 12026, "y": 4056}, {"x": 4056, "y": 72280}, {"x": 72280, "y": 15520}, {"x": 7280, "y": 22219}, {"x": 4087, "y": 7299}, {"x": 7299, "y": 15571}, {"x": 15571, "y": 1705}, {"x": 21594, "y": 20922}, {"x": 20922, "y": 10250}, {"x": 10250, "y": 16832}, {"x": 16832, "y": 29981}, {"x": 29981, "y": 5106}, {"x": 4176, "y": 5082}, {"x": 5082, "y": 4232}, {"x": 4232, "y": 4055}, {"x": 7289, "y": 9856}, {"x": 9856, "y": 25503}, {"x": 8233, "y": 16161}, {"x": 16161, "y": 20587}, {"x": 35876, "y": 26975}, {"x": 24174, "y": 6075}, {"x": 6075, "y": 24055}, {"x": 15676, "y": 14059}, {"x": 10314, "y": 3875}, {"x": 3875, "y": 24198}, {"x": 24198, "y": 19230}, {"x": 2569, "y": 16032}, {"x": 16032, "y": 9078}, {"x": 3293, "y": 63772}, {"x": 21589, "y": 15037}, {"x": 15037, "y": 12068}, {"x": 12068, "y": 20289}, {"x": 20289, "y": 35259}, {"x": 20304, "y": 23598}, {"x": 23598, "y": 10703}, {"x": 1263, "y": 11430}, {"x": 11430, "y": 4082}, {"x": 4082, "y": 31990}, {"x": 3594, "y": 15064}, {"x": 15064, "y": 4388}, {"x": 4388, "y": 5760}, {"x": 2566, "y": 22228}, {"x": 13135, "y": 5609}, {"x": 8557, "y": 7448}, {"x": 7448, "y": 20251}, {"x": 6090, "y": 7582}, {"x": 7582, "y": 22240}, {"x": 49485, "y": 15083}, {"x": 15083, "y": 7056}, {"x": 16199, "y": 7727}, {"x": 7727, "y": 5474}, {"x": 4094, "y": 3473}, {"x": 6085, "y": 38441}, {"x": 38441, "y": 22829}, {"x": 22829, "y": 2587}, {"x": 2587, "y": 16329}, {"x": 11930, "y": 15954}, {"x": 15954, "y": 6608}, {"x": 6608, "y": 18339}, {"x": 13364, "y": 5307}, {"x": 5307, "y": 31341}, {"x": 3608, "y": 9227}, {"x": 9227, "y": 3085}, {"x": 3085, "y": 17598}, {"x": 8360, "y": 4942}, {"x": 4942, "y": 30430}, {"x": 18315, "y": 4932}, {"x": 4932, "y": 15709}, {"x": 15709, "y": 11918}, {"x": 5341, "y": 6240}, {"x": 6240, "y": 46268}, {"x": 46268, "y": 3078}, {"x": 3078, "y": 42400}, {"x": 42400, "y": 10087}, {"x": 13774, "y": 3602}, {"x": 3602, "y": 13981}, {"x": 16819, "y": 4155}, {"x": 19419, "y": 11567}, {"x": 11567, "y": 4134}, {"x": 4134, "y": 3181}, {"x": 42346, "y": 17920}, {"x": 5970, "y": 2569}, {"x": 28042, "y": 17035}, {"x": 5572, "y": 20858}, {"x": 20858, "y": 24607}, {"x": 12592, "y": 23322}, {"x": 16997, "y": 27926}, {"x": 3607, "y": 28931}, {"x": 7074, "y": 1606}, {"x": 7601, "y": 1764}, {"x": 1764, "y": 23533}, {"x": 23533, "y": 10431}, {"x": 2956, "y": 1062}, {"x": 1062, "y": 28070}, {"x": 28070, "y": 8754}, {"x": 8754, "y": 3802}, {"x": 26718, "y": 22570}, {"x": 6081, "y": 22194}, {"x": 7387, "y": 24767}, {"x": 22877, "y": 17056}, {"x": 17056, "y": 9203}, {"x": 9203, "y": 28037}, {"x": 28037, "y": 32232}, {"x": 13741, "y": 33917}, {"x": 33917, "y": 5345}, {"x": 5345, "y": 26559}, {"x": 15549, "y": 11170}, {"x": 11170, "y": 42381}, {"x": 42381, "y": 64456}, {"x": 8998, "y": 6808}, {"x": 6808, "y": 7007}, {"x": 5573, "y": 5721}, {"x": 5721, "y": 31328}, {"x": 20231, "y": 3259}, {"x": 6066, "y": 6242}, {"x": 6242, "y": 16356}, {"x": 16356, "y": 11850}, {"x": 20264, "y": 15595}, {"x": 15595, "y": 15711}, {"x": 14320, "y": 10096}, {"x": 10096, "y": 35176}, {"x": 35176, "y": 25673}, {"x": 25673, "y": 16861}, {"x": 16861, "y": 22168}, {"x": 4066, "y": 10121}, {"x": 2516, "y": 1960}, {"x": 17095, "y": 8101}, {"x": 8101, "y": 6602}, {"x": 6602, "y": 10060}, {"x": 6416, "y": 11598}, {"x": 6588, "y": 14184}, {"x": 7280, "y": 35864}, {"x": 35864, "y": 22252}, {"x": 22252, "y": 6797}, {"x": 6797, "y": 5983}, {"x": 5983, "y": 10533}, {"x": 14450, "y": 10593}, {"x": 10593, "y": 54081}, {"x": 54081, "y": 81}, {"x": 35908, "y": 14758}, {"x": 6903, "y": 17681}, {"x": 11195, "y": 30002}, {"x": 6092, "y": 1761}, {"x": 5241, "y": 11866}, {"x": 12473, "y": 37781}, {"x": 37781, "y": 7759}, {"x": 7759, "y": 3054}, {"x": 3054, "y": 20879}, {"x": 20879, "y": 15074}, {"x": 15074, "y": 4373}, {"x": 6568, "y": 36513}, {"x": 36513, "y": 8944}, {"x": 12664, "y": 14419}, {"x": 14419, "y": 24840}, {"x": 7059, "y": 7772}, {"x": 7772, "y": 8395}, {"x": 23532, "y": 6040}, {"x": 6040, "y": 2662}, {"x": 2662, "y": 12905}],backgroundColor:'rgba(149,165,166,0.4)',borderColor:'#95a5a6',pointRadius:3}
+  ]},
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2,
+    plugins:{legend:{labels:{color:'#8b95a5'}}},
+    scales:{y:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'},title:{display:true,text:'下一局评分',color:'#8b95a5'}},x:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'},title:{display:true,text:'当前局评分',color:'#8b95a5'}}}
+  }
+});
+new Chart(document.getElementById('chart-one-more'),{
+  type:'bar',
+  data:{labels:["1局\n(见好就收)\\n(45次)", "2局\\n(21次)", "3局\\n(29次)", "4-5局\\n(50次)", "6+局\\n(17次)"],
+    datasets:[
+      {label:'前N-1局胜率 %',data:[null, 52.4, 63.8, 56.3, 68.5],backgroundColor:'rgba(74,158,255,0.7)',borderColor:'#4a9eff',borderWidth:1},
+      {label:'末局胜率 %',data:[44.4, 61.9, 55.2, 50.0, 35.3],backgroundColor:'rgba(236,72,153,0.7)',borderColor:'#ec4899',borderWidth:1},
+      {label:'整体平均胜率 (57.0%)',data:[57.0, 57.0, 57.0, 57.0, 57.0],type:'line',borderColor:'#c8aa6e',borderWidth:2,borderDash:[6,4],pointRadius:0,fill:false,order:1}
+    ]
+  },
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2,
+    plugins:{legend:{labels:{color:'#8b95a5'}}},
+    scales:{y:{max:100,ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}},x:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}}}
+  }
+});
+new Chart(document.getElementById('chart-carry-profile'),{
+  type:'bar',
+  data:{labels:['胜局分类','败局分类'],
+    datasets:[
+      {label:'硬Carry',data:[22,0],backgroundColor:'rgba(245,158,11,0.8)',borderColor:'#f59e0b',borderWidth:1},
+      {label:'稳定参与',data:[223,0],backgroundColor:'rgba(74,158,255,0.7)',borderColor:'#4a9eff',borderWidth:1},
+      {label:'躺赢',data:[40,0],backgroundColor:'rgba(149,165,166,0.7)',borderColor:'#95a5a6',borderWidth:1},
+      {label:'尽力局(SVP)',data:[0,7],backgroundColor:'rgba(168,85,247,0.7)',borderColor:'#a855f7',borderWidth:1},
+      {label:'普通败局',data:[0,163],backgroundColor:'rgba(46,204,113,0.5)',borderColor:'#2ecc71',borderWidth:1},
+      {label:'崩盘局',data:[0,45],backgroundColor:'rgba(231,76,60,0.7)',borderColor:'#e74c3c',borderWidth:1}
+    ]
+  },
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2,
+    plugins:{legend:{labels:{color:'#8b95a5'}}},
+    scales:{x:{stacked:true,ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}},y:{stacked:true,ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}}}
+  }
+});
+new Chart(document.getElementById('chart-multikill'),{
+  type:'bar',
+  data:{labels:["无多杀", "双杀", "三杀", "四杀", "五杀"],
+    datasets:[
+      {label:'胜率 %',data:[35.4, 54.2, 84.8, 100.0, 100.0],backgroundColor:'rgba(245,158,11,0.7)',borderColor:'#f59e0b',borderWidth:1,yAxisID:'y'},
+      {label:'场次',data:[130, 249, 112, 8, 1],backgroundColor:'rgba(168,85,247,0.3)',borderColor:'#a855f7',borderWidth:1,yAxisID:'y1',type:'line',tension:0.3}
+    ]
+  },
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2,
+    plugins:{legend:{labels:{color:'#8b95a5'}}},
+    scales:{
+      y:{type:'linear',position:'left',title:{display:true,text:'胜率 %',color:'#8b95a5'},ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'},max:100},
+      y1:{type:'linear',position:'right',title:{display:true,text:'场次',color:'#8b95a5'},ticks:{color:'#8b95a5'},grid:{display:false}},
+      x:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}}
+    }
+  }
+});
+(function(){
+  var cells=[{"day": 0, "hour": 0, "wr": 60.0, "games": 5}, {"day": 0, "hour": 9, "wr": 75.0, "games": 4}, {"day": 0, "hour": 10, "wr": 42.9, "games": 21}, {"day": 0, "hour": 11, "wr": 64.7, "games": 17}, {"day": 1, "hour": 0, "wr": 63.6, "games": 11}, {"day": 1, "hour": 8, "wr": 50.0, "games": 6}, {"day": 1, "hour": 9, "wr": 72.7, "games": 11}, {"day": 1, "hour": 10, "wr": 60.9, "games": 23}, {"day": 1, "hour": 11, "wr": 41.2, "games": 17}, {"day": 2, "hour": 0, "wr": 45.5, "games": 11}, {"day": 2, "hour": 1, "wr": 50.0, "games": 6}, {"day": 2, "hour": 2, "wr": 100.0, "games": 4}, {"day": 2, "hour": 7, "wr": 66.7, "games": 3}, {"day": 2, "hour": 8, "wr": 55.6, "games": 9}, {"day": 2, "hour": 9, "wr": 50.0, "games": 8}, {"day": 2, "hour": 10, "wr": 53.8, "games": 26}, {"day": 2, "hour": 11, "wr": 52.6, "games": 19}, {"day": 3, "hour": 0, "wr": 60.0, "games": 5}, {"day": 3, "hour": 1, "wr": 100.0, "games": 3}, {"day": 3, "hour": 9, "wr": 77.8, "games": 9}, {"day": 3, "hour": 10, "wr": 57.9, "games": 19}, {"day": 3, "hour": 11, "wr": 51.9, "games": 27}, {"day": 4, "hour": 0, "wr": 55.6, "games": 18}, {"day": 4, "hour": 1, "wr": 70.0, "games": 10}, {"day": 4, "hour": 2, "wr": 20.0, "games": 5}, {"day": 4, "hour": 3, "wr": 25.0, "games": 4}, {"day": 4, "hour": 9, "wr": 42.9, "games": 7}, {"day": 4, "hour": 10, "wr": 53.3, "games": 15}, {"day": 4, "hour": 11, "wr": 55.6, "games": 18}, {"day": 5, "hour": 0, "wr": 80.0, "games": 10}, {"day": 5, "hour": 1, "wr": 16.7, "games": 6}, {"day": 5, "hour": 2, "wr": 100.0, "games": 3}, {"day": 5, "hour": 5, "wr": 40.0, "games": 5}, {"day": 5, "hour": 6, "wr": 85.7, "games": 7}, {"day": 5, "hour": 7, "wr": 42.9, "games": 14}, {"day": 5, "hour": 8, "wr": 52.6, "games": 19}, {"day": 5, "hour": 9, "wr": 56.2, "games": 16}, {"day": 5, "hour": 10, "wr": 66.7, "games": 12}, {"day": 5, "hour": 11, "wr": 42.9, "games": 7}, {"day": 6, "hour": 0, "wr": 100.0, "games": 3}, {"day": 6, "hour": 7, "wr": 70.0, "games": 10}, {"day": 6, "hour": 8, "wr": 87.5, "games": 8}, {"day": 6, "hour": 9, "wr": 60.0, "games": 5}, {"day": 6, "hour": 10, "wr": 41.7, "games": 12}, {"day": 6, "hour": 11, "wr": 100.0, "games": 7}];
+  var gameCells=[{"day": 0, "hour": 0, "games": 5}, {"day": 0, "hour": 1, "games": 2}, {"day": 0, "hour": 2, "games": 1}, {"day": 0, "hour": 8, "games": 2}, {"day": 0, "hour": 9, "games": 4}, {"day": 0, "hour": 10, "games": 21}, {"day": 0, "hour": 11, "games": 17}, {"day": 1, "hour": 0, "games": 11}, {"day": 1, "hour": 1, "games": 2}, {"day": 1, "hour": 8, "games": 6}, {"day": 1, "hour": 9, "games": 11}, {"day": 1, "hour": 10, "games": 23}, {"day": 1, "hour": 11, "games": 17}, {"day": 2, "hour": 0, "games": 11}, {"day": 2, "hour": 1, "games": 6}, {"day": 2, "hour": 2, "games": 4}, {"day": 2, "hour": 7, "games": 3}, {"day": 2, "hour": 8, "games": 9}, {"day": 2, "hour": 9, "games": 8}, {"day": 2, "hour": 10, "games": 26}, {"day": 2, "hour": 11, "games": 19}, {"day": 3, "hour": 0, "games": 5}, {"day": 3, "hour": 1, "games": 3}, {"day": 3, "hour": 2, "games": 1}, {"day": 3, "hour": 7, "games": 1}, {"day": 3, "hour": 8, "games": 1}, {"day": 3, "hour": 9, "games": 9}, {"day": 3, "hour": 10, "games": 19}, {"day": 3, "hour": 11, "games": 27}, {"day": 4, "hour": 0, "games": 18}, {"day": 4, "hour": 1, "games": 10}, {"day": 4, "hour": 2, "games": 5}, {"day": 4, "hour": 3, "games": 4}, {"day": 4, "hour": 9, "games": 7}, {"day": 4, "hour": 10, "games": 15}, {"day": 4, "hour": 11, "games": 18}, {"day": 5, "hour": 0, "games": 10}, {"day": 5, "hour": 1, "games": 6}, {"day": 5, "hour": 2, "games": 3}, {"day": 5, "hour": 3, "games": 1}, {"day": 5, "hour": 5, "games": 5}, {"day": 5, "hour": 6, "games": 7}, {"day": 5, "hour": 7, "games": 14}, {"day": 5, "hour": 8, "games": 19}, {"day": 5, "hour": 9, "games": 16}, {"day": 5, "hour": 10, "games": 12}, {"day": 5, "hour": 11, "games": 7}, {"day": 6, "hour": 0, "games": 3}, {"day": 6, "hour": 1, "games": 1}, {"day": 6, "hour": 4, "games": 1}, {"day": 6, "hour": 5, "games": 1}, {"day": 6, "hour": 6, "games": 1}, {"day": 6, "hour": 7, "games": 10}, {"day": 6, "hour": 8, "games": 8}, {"day": 6, "hour": 9, "games": 5}, {"day": 6, "hour": 10, "games": 12}, {"day": 6, "hour": 11, "games": 7}];
+  var dayLabels=["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+  var hourLabels=["0-1", "2-3", "4-5", "6-7", "8-9", "10-11", "12-13", "14-15", "16-17", "18-19", "20-21", "22-23"];
+  var numSlots=hourLabels.length;
+
+  // 胜率热力图
+  (function(){
+    if(!cells.length)return;
+    var container=document.getElementById('heatmap-prime-time');
+    var table=document.createElement('table');
+    table.style.cssText='border-collapse:collapse;table-layout:fixed;width:100%;font-size:11px';
+    var thead='<tr><th style="padding:4px 6px;color:#5a6575"></th>';
+    for(var h=0;h<numSlots;h++) thead+='<th style="padding:4px;color:#5a6575;font-weight:400;text-align:center">'+hourLabels[h]+'</th>';
+    thead+='</tr>';
+    var rows='';
+    for(var d=0;d<7;d++){
+      rows+='<tr><td style="padding:4px 6px;color:#8b95a5;font-weight:600;white-space:nowrap">'+dayLabels[d]+'</td>';
+      for(var h=0;h<numSlots;h++){
+        var found=cells.find(function(c){return c.day===d&&c.hour===h;});
+        if(found){
+          var wr=found.wr;
+          // 颜色: 红(<45%) → 黄(45-55%) → 绿(>55%)
+          var hue,sat,light;
+          if(wr>=55){hue=120;sat=22+Math.min(35,(wr-55)*0.7);light=50-Math.min(12,(wr-55)*0.24);}
+          else if(wr>=45){hue=40;sat=22+Math.min(35,Math.abs(wr-50)*7);light=50-Math.abs(wr-50)*0.18;}
+          else{hue=0;sat=22+Math.min(35,(45-wr)*0.7);light=50-Math.min(12,(45-wr)*0.24);}
+          var bg='hsl('+hue+','+sat+'%,'+light+'%)';
+          var textColor=light>46?'#0a0e14':'#d4d8dd';
+          rows+='<td style="padding:4px;text-align:center;background:'+bg+';color:'+textColor+';cursor:pointer" title="'+dayLabels[d]+' '+hourLabels[h]+' - 胜率 '+wr+'% ('+found.games+'场)">'+Math.round(wr)+'</td>';
+        }else{
+          rows+='<td style="padding:4px;text-align:center;color:#2a3a4a">·</td>';
+        }
+      }
+      rows+='</tr>';
+    }
+    table.innerHTML=thead+rows;
+    container.appendChild(table);
+  })();
+
+  // 对局数量热力图
+  (function(){
+    if(!gameCells.length)return;
+    var container=document.getElementById('heatmap-game-count');
+    if(!container)return;
+    var table=document.createElement('table');
+    table.style.cssText='border-collapse:collapse;table-layout:fixed;width:100%;font-size:11px';
+    var thead='<tr><th style="padding:4px 6px;color:#5a6575"></th>';
+    for(var h=0;h<numSlots;h++) thead+='<th style="padding:4px;color:#5a6575;font-weight:400;text-align:center">'+hourLabels[h]+'</th>';
+    thead+='</tr>';
+    // 计算最大游戏数用于归一化颜色
+    var maxGames=0;
+    gameCells.forEach(function(c){if(c.games>maxGames)maxGames=c.games;});
+    var rows='';
+    for(var d=0;d<7;d++){
+      rows+='<tr><td style="padding:4px 6px;color:#8b95a5;font-weight:600;white-space:nowrap">'+dayLabels[d]+'</td>';
+      for(var h=0;h<numSlots;h++){
+        var found=gameCells.find(function(c){return c.day===d&&c.hour===h;});
+        if(found&&found.games>0){
+          var intensity=Math.min(1,found.games/maxGames*0.85+0.15);
+          var bg='hsl(215,35%,'+(60-intensity*35)+'%)';
+          var textColor=intensity>0.6?'#d4d8dd':'#8b95a5';
+          rows+='<td style="padding:4px;text-align:center;background:'+bg+';color:'+textColor+';cursor:pointer" title="'+dayLabels[d]+' '+hourLabels[h]+' - '+found.games+'场">'+found.games+'</td>';
+        }else{
+          rows+='<td style="padding:4px;text-align:center;color:#2a3a4a">·</td>';
+        }
+      }
+      rows+='</tr>';
+    }
+    table.innerHTML=thead+rows;
+    container.appendChild(table);
+  })();
+})();
+new Chart(document.getElementById('chart-season-tier-timeline'),{
+  type:'line',
+  data:{labels:["S19", "S20", "S21", "S22", "S23", "S24", "S25", "S26"],
+    datasets:[
+      {label:'单双排段位',data:[1, 2, 2, 2, 3, 3, 3, 4],borderColor:'#c8aa6e',backgroundColor:'rgba(200,170,110,0.08)',fill:true,stepped:true,pointRadius:5,pointBackgroundColor:'#c8aa6e',pointBorderColor:'#c8aa6e',borderWidth:2},
+      {label:'组排段位',data:[1, 2, 2, 2, 3, 3, 3, 3],borderColor:'#a855f7',backgroundColor:'rgba(168,85,247,0.05)',fill:true,stepped:true,pointRadius:5,pointBackgroundColor:'#a855f7',pointBorderColor:'#a855f7',borderWidth:2,borderDash:[6,3]}
+    ]
+  },
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2.5,
+    plugins:{legend:{labels:{color:'#8b95a5',usePointStyle:true,padding:20}}},
+    scales:{
+      y:{min:0,max:8,
+        ticks:{color:'#8b95a5',stepSize:1,
+          callback:function(v){var m={"8": "最强王者", "7": "傲世宗师", "6": "超凡大师", "5": "钻石", "4": "翡翠", "3": "铂金", "2": "黄金", "1": "白银", "0": "未定级"};return m[v]||'';}
+        },
+        grid:{color:'#2a3a4a'},
+        title:{display:true,text:'段位',color:'#8b95a5'}
+      },
+      x:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'},
+        title:{display:true,text:'赛季',color:'#8b95a5'}
+      }
+    }
+  }
+});
+new Chart(document.getElementById('chart-career-mode-dist'),{
+  type:'bar',
+  data:{labels:["排位", "大乱斗", "匹配", "组排", "人机", "Clash"],datasets:[{label:'场次',data:[233, 101, 95, 71, 21, 14],backgroundColor:["rgba(74,158,255,0.8)", "rgba(46,204,113,0.8)", "rgba(245,158,11,0.8)", "rgba(168,85,247,0.8)", "rgba(149,165,166,0.8)", "rgba(236,72,153,0.8)"],borderWidth:0}]},
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2,
+    plugins:{legend:{display:false}},
+    scales:{y:{ticks:{color:'#8b95a5',stepSize:1},grid:{color:'#2a3a4a'},title:{display:true,text:'场次',color:'#8b95a5'}},x:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}}}
+  }
+});
+new Chart(document.getElementById('chart-career-mode-wr'),{
+  type:'bar',
+  data:{labels:["排位", "大乱斗", "匹配", "组排", "人机", "Clash"],datasets:[{label:'胜率 %',data:[55.8, 63.4, 56.8, 52.1, 100.0, 0.0],backgroundColor:["rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(46,204,113,0.7)", "rgba(231,76,60,0.7)"],borderWidth:0}]},
+  options:{responsive:true,maintainAspectRatio:true,aspectRatio:2,
+    plugins:{legend:{display:false}},
+    scales:{y:{min:0,max:100,ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'},title:{display:true,text:'胜率 %',color:'#8b95a5'}},x:{ticks:{color:'#8b95a5'},grid:{color:'#2a3a4a'}}}
+  }
+});
+document.querySelectorAll('.chart-wrap canvas').forEach(function(c){
+  var ch=Chart.getChart(c);
+  if(ch&&ch.options.aspectRatio){c.parentElement.style.aspectRatio=ch.options.aspectRatio;}
+});
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){tryCDN(0);});
+  else tryCDN(0);
+  // 招牌英雄皮肤背景管理
+  var _skinCid=157;
+  var _skinPool=[];
+  var _skinReady=false;
+  var _curSid='001';
+  var _heroName='亚索';
+  function _setBg(sid){
+    _curSid=sid;
+    document.body.style.setProperty('--bg-image','url(https://wegame.gtimg.com/g.26-r.c2d3c/helper/lol/assis/images/resources/skins/original/'+_skinCid+'-'+sid+'.jpg)');
+  }
+  function _updateTooltip(){
+    if(_skinBtn)_skinBtn.title='你的招牌英雄'+_heroName+'有'+_skinPool.length+'个皮肤';
+  }
+  var _skinBtn=document.getElementById('skinSwitchBtn');
+  if(_skinBtn){
+    _skinBtn.addEventListener('click',function(){
+      if(!_skinReady){alert('皮肤资源检测中，请稍等…');return;}
+      if(_skinPool.length<=1)return;
+      var idx=_skinPool.indexOf(_curSid);
+      idx=(idx+1)%_skinPool.length;
+      _setBg(_skinPool[idx]);
+    });
+  }
+  function _detectSkins(){
+    if(!_skinCid)return;
+    var total=21,done=0;
+    function ck(sid,ok){
+      if(ok)_skinPool.push(sid);
+      done++;
+      if(done>=total){
+        _skinReady=true;
+        if(_skinBtn){
+          _skinBtn.classList.remove('loading');
+          _updateTooltip();
+        }
+        if(_skinPool.indexOf('001')===-1&&_skinPool.indexOf('000')!==-1)_setBg('000');
+        else if(_skinPool.length===0)document.body.style.setProperty('--bg-image','none');
+      }
+    }
+    for(var i=0;i<=20;i++){
+      (function(sid){
+        var img=new Image();
+        img.onload=function(){ck(sid,true);};
+        img.onerror=function(){ck(sid,false);};
+        img.src='https://wegame.gtimg.com/g.26-r.c2d3c/helper/lol/assis/images/resources/skins/original/'+_skinCid+'-'+sid+'.jpg';
+      })(('00'+i).slice(-3));
+    }
+  }
+  if(document.readyState==='complete')_detectSkins();
+  else window.addEventListener('load',_detectSkins);
+})();
+</script>
+</body>
+</html>
