@@ -5,6 +5,7 @@ Usage: .venv\\Scripts\\python build_exe.py
 """
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -27,6 +28,23 @@ def run(cmd: list[str], description: str) -> bool:
     return True
 
 
+def find_upx() -> str | None:
+    """Locate UPX executable for binary compression (30-50% reduction)."""
+    candidates = [
+        ROOT / ".venv" / "Scripts" / "upx.exe",
+        Path(os.environ.get("USERPROFILE", "")) / "scoop" / "shims" / "upx.exe",
+        Path(os.environ.get("ProgramFiles", "")) / "upx" / "upx.exe",
+        Path(os.environ.get("ProgramFiles(x86)", "")) / "upx" / "upx.exe",
+    ]
+    for p in candidates:
+        if p.exists():
+            return str(p)
+    which = shutil.which("upx")
+    if which:
+        return which
+    return None
+
+
 def main() -> int:
     # Force UTF-8 output to avoid GBK encode errors on Windows
     sys.stdout.reconfigure(encoding="utf-8")
@@ -45,8 +63,7 @@ def main() -> int:
     if check.returncode == 0:
         print("  [OK] PyInstaller already installed")
     else:
-        print("  [1/3] Installing PyInstaller...")
-        # Use `python -m pip` so pip always matches the target python
+        print("  [1/4] Installing PyInstaller...")
         if not run(
             [str(PYTHON), "-m", "pip", "install", "pyinstaller"],
             "Install PyInstaller",
@@ -59,37 +76,43 @@ def main() -> int:
          "from tkinter import Tcl; r=Tcl(); print(r.eval('info library'))"],
         capture_output=True, text=True, cwd=str(ROOT),
     ).stdout.strip()
-    tcl_root = Path(tcl_root)  # e.g. D:/Software/Miniconda/Library/lib/tcl8.6
-    tk_root = tcl_root.parent / f"tk{tcl_root.name[3:]}"  # tk8.6
-    conda_bin = tcl_root.parent.parent / "bin"  # D:/Software/Miniconda/Library/bin
+    tcl_root = Path(tcl_root)
+    tk_root = tcl_root.parent / f"tk{tcl_root.name[3:]}"
+    conda_bin = tcl_root.parent.parent / "bin"
 
     tcl_dll = conda_bin / "tcl86t.dll"
     tk_dll = conda_bin / "tk86t.dll"
 
-    # DLLs that PyInstaller warns about (all in conda_bin, all needed at runtime)
     conda_dlls = [
         tcl_dll,
         tk_dll,
-        conda_bin / "sqlite3.dll",      # _sqlite3.pyd → database (core)
-        conda_bin / "libexpat.dll",      # pyexpat.pyd → XML parsing
-        conda_bin / "ffi.dll",           # _ctypes.pyd → FFI (mitmproxy needs)
-        conda_bin / "liblzma.dll",       # _lzma.pyd → compression
-        conda_bin / "libbz2.dll",        # _bz2.pyd → compression
-        conda_bin / "libmpdec-4.dll",    # _decimal.pyd → decimal math
+        conda_bin / "sqlite3.dll",
+        conda_bin / "libexpat.dll",
+        conda_bin / "ffi.dll",
+        conda_bin / "liblzma.dll",
+        conda_bin / "libbz2.dll",
+        conda_bin / "libmpdec-4.dll",
     ]
 
     for dll in conda_dlls:
         status = "OK" if dll.exists() else "MISSING"
         print(f"  [{status}] {dll.name}")
 
-    # Tcl/Tk script libraries
     tcl_data = tk_data = None
     if tcl_root.exists():
         tcl_data = (tcl_root, "tcl8.6")
     if tk_root.exists():
         tk_data = (tk_root, "tk8.6")
 
-    # ── Step 3: clean old output (may be locked by AV) ──
+    # ── Step 3: locate UPX (optional but ~30-50% binary compression) ──
+    upx_exe = find_upx()
+    if upx_exe:
+        print(f"  [OK] UPX found: {upx_exe}")
+    else:
+        print("  [WARN] UPX not found — skipping binary compression")
+        print("         Install: winget install upx/upx")
+
+    # ── Step 4: clean old output ──
     old_exe = ROOT / "dist" / "lolhistory-gui.exe"
     out_name = "lolhistory-gui"
     if old_exe.exists():
@@ -97,14 +120,13 @@ def main() -> int:
             old_exe.unlink()
             print(f"  [OK] Removed old {old_exe.name}")
         except PermissionError:
-            # File locked by AV — output to a temp name instead
             import datetime
             ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             out_name = f"lolhistory-gui-{ts}"
             print(f"  [WARN] Old exe locked (AV?), outputting as {out_name}.exe")
 
-    # ── Step 4: package ──
-    print("\n  [4/4] Packaging...")
+    # ── Step 5: package ──
+    print("\n  [5/5] Packaging...")
 
     hidden_imports = [
         "lolhistory._wegame",
@@ -114,27 +136,32 @@ def main() -> int:
         "lolhistory._cookie_extract",
         "lolhistory._capture_cookies",
         "lolhistory",
+        # mitmproxy 官方 PyInstaller hook 推荐
+        "mitmproxy.script",
     ]
 
     cmd = [
-        str(PYTHON),
-        "-m",
-        "PyInstaller",
+        str(PYTHON), "-m", "PyInstaller",
         "--onefile",
         "--noconsole",
         "--clean",
         "--name", out_name,
-        # mitmproxy: collect all submodules + data + binaries (handles dynamic imports)
-        "--collect-submodules", "mitmproxy",
+        # ── mitmproxy: 只收集 data + binaries，不收集全部子模块 ──
+        #   原因：addons/__init__.py 已显式导入所有 addon，PyInstaller 可自动追踪。
+        #   全部 --collect-submodules 会把 Console UI (urwid)、Web UI 等打包进去。
         "--collect-data", "mitmproxy",
         "--collect-binaries", "mitmproxy",
-        # mitmproxy_rs: Rust TLS extension (required by mitmproxy on Windows)
-        "--collect-submodules", "mitmproxy_rs",
+        # ── mitmproxy_rs: 只需 .pyd 文件，无需子模块 ──
         "--collect-binaries", "mitmproxy_rs",
-        # aioquic: QUIC support (mitmproxy uses this for HTTP/3)
-        "--collect-submodules", "aioquic",
+        # ── 排除明确不用的模块（减小 exe 体积）──
+        "--exclude-module", "mitmproxy.tools.console",
+        "--exclude-module", "mitmproxy.tools.web",
+        "--exclude-module", "urwid",
     ]
-    # Bundle conda DLLs that PyInstaller can't resolve
+    # UPX binary compression
+    if upx_exe is not None:
+        cmd += ["--upx-dir", str(Path(upx_exe).parent)]
+    # Bundle conda DLLs
     for dll in conda_dlls:
         if dll.exists():
             cmd += ["--add-binary", f"{dll}{os.pathsep}."]
