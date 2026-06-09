@@ -238,10 +238,14 @@ def run_capture(output: str = "cookies.json",
     """
     global _proxy_was_enabled, _original_proxy
 
-    # 修复 Windows GBK 终端编码问题
-    import io
+    # 修复 Windows GBK 终端编码问题 + exe noconsole 模式兼容
+    # exe 无控制台时 sys.stdout 为 None，mitmproxy termlog addon 需要 .isatty()
+    import io as _io
+    import os as _os
     if hasattr(sys.stdout, 'buffer'):
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+        sys.stdout = _io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    elif sys.stdout is None:
+        sys.stdout = open(_os.devnull, 'w')
 
     addon = WegameCookieCapture()
 

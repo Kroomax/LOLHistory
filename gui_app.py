@@ -159,6 +159,9 @@ class QueueStringIO(io.StringIO):
             self._q.put(("capture_log", s))
         return super().write(s)
 
+    def isatty(self) -> bool:
+        return False
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 主 GUI 类
@@ -1023,6 +1026,13 @@ class LOLHistoryApp:
                     self._msg_queue.put(("log", "根证书文件不存在，正在启动 mitmproxy 生成证书...\n"))
                     self._msg_queue.put(("cert_status", "generating"))
 
+                    # GUI/exe 模式下 sys.stdout 可能为 None（noconsole），
+                    # mitmproxy termlog addon 需要 .isatty() — 临时设置 dummy stdout
+                    import os as _os
+                    _saved_stdout = sys.stdout
+                    if sys.stdout is None:
+                        sys.stdout = open(_os.devnull, 'w')
+
                     import asyncio
                     import socket as _socket
                     from mitmproxy import options as _opts
@@ -1073,6 +1083,14 @@ class LOLHistoryApp:
                         loop.close()
                     except Exception:
                         pass
+
+                    # 恢复原始 stdout
+                    if _saved_stdout is None:
+                        try:
+                            sys.stdout.close()
+                        except Exception:
+                            pass
+                    sys.stdout = _saved_stdout
 
                 if not cert_path:
                     self._msg_queue.put(("cert_error", "未能生成根证书文件，请检查 mitmproxy 是否正确安装"))
