@@ -414,6 +414,11 @@ class LOLHistoryApp:
         self._update_step_indicator(stage)
         self._update_footer(stage)
 
+        # 切换到 Cookie 页面时自动检测根证书状态
+        if stage == 1:
+            self.root.after(200, lambda: self._update_cert_status_ui(
+                self._check_cert_status()))
+
     # ═══════════════════════════════════════════════════════════════════════════
     # 底部导航按钮
     # ═══════════════════════════════════════════════════════════════════════════
@@ -579,26 +584,52 @@ class LOLHistoryApp:
                   font=FONT_SMALL, bg=THEME["card"], fg=THEME["text3"]).pack(side="left", padx=(10, 0))
 
         cap_steps = [
-            "1. 点击下方「开始抓包」按钮 → 等待引擎启动（约 3 秒）",
-            "2. 看到「抓包引擎已准备就绪」提示后，打开并登录 WeGame",
-            "3. 登录成功后 Cookie 自动捕获，无需任何额外操作",
+            "1. 首次使用需先点击下方「安装根证书」（仅需一次，无需管理员权限）",
+            "2. 点击「开始抓包」→ 等待引擎启动（约 3 秒）",
+            "3. 看到「抓包引擎已准备就绪」提示后，打开并登录 WeGame",
+            "4. 登录成功后 Cookie 自动捕获，无需任何额外操作",
         ]
         for step in cap_steps:
             tk.Label(cap_inner, text=step, font=FONT_BODY,
                       bg=THEME["card"], fg=THEME["text2"]).pack(anchor="w", pady=(6, 0))
 
+        # ── 根证书状态 ───────────────────────────────────────────────────
+        cert_frame = tk.Frame(cap_inner, bg=THEME["card"])
+        cert_frame.pack(fill="x", pady=(10, 4))
+
+        self._cert_status_icon = tk.Label(cert_frame, text="", font=FONT_BODY,
+                                          bg=THEME["card"], fg=THEME["text2"])
+        self._cert_status_icon.pack(side="left")
+
+        self._cert_status_text = tk.Label(cert_frame, text="正在检测根证书...",
+                                          font=FONT_SMALL, bg=THEME["card"],
+                                          fg=THEME["text2"])
+        self._cert_status_text.pack(side="left", padx=(4, 12))
+
+        self._btn_install_cert = tk.Button(
+            cert_frame, text="🔒 安装根证书", font=FONT_SMALL,
+            bg=THEME["card2"], fg=THEME["blue2"], activebackground=THEME["hover"],
+            activeforeground=THEME["blue"], relief="flat",
+            padx=12, pady=4, cursor="hand2", borderwidth=1,
+            command=self._install_cert)
+        self._btn_install_cert.pack(side="left")
+
+        # ── 抓包状态 + 按钮 ──────────────────────────────────────────────
         self._capture_status = tk.Label(cap_inner, text="",
                                          font=("Microsoft YaHei", 10, "bold"),
                                          bg=THEME["card"], fg=THEME["green"])
         self._capture_status.pack(anchor="w", pady=(8, 8))
 
+        btn_row = tk.Frame(cap_inner, bg=THEME["card"])
+        btn_row.pack(fill="x")
+
         self._btn_capture = tk.Button(
-            cap_inner, text="🔍 开始抓包", font=FONT_BTN,
+            btn_row, text="🔍 开始抓包", font=FONT_BTN,
             bg=THEME["gold"], fg=THEME["bg"], activebackground="#d4b87a",
             activeforeground=THEME["bg"], relief="flat",
             padx=20, pady=8, cursor="hand2", borderwidth=0,
             command=self._run_capture)
-        self._btn_capture.pack(anchor="w")
+        self._btn_capture.pack(side="left")
 
         # ── 分隔线 ──────────────────────────────────────────────────────────
         sep_frame = tk.Frame(page, bg=THEME["bg"], height=30)
@@ -838,8 +869,23 @@ class LOLHistoryApp:
 
     def _run_capture(self):
         """在后台线程启动一键抓包。"""
-        self._capture_status.configure(
-            text="⏳ 正在启动抓包引擎...", fg=THEME["orange"])
+        # 前置检查：根证书状态
+        cert_status = self._check_cert_status()
+        if cert_status == "missing":
+            # 证书文件不存在，阻止抓包并提示用户先安装
+            self._update_cert_status_ui(cert_status)
+            self._capture_status.configure(
+                text="⚠ 根证书尚未生成，请先点击上方「生成并安装根证书」按钮（仅需一次，约 5 秒）",
+                fg=THEME["orange"])
+            return
+        elif cert_status == "exists":
+            # 证书存在但未安装 — 刷新 UI 提示，但不阻止（用户可自行决定）
+            self._update_cert_status_ui(cert_status)
+            self._capture_status.configure(
+                text="⚠ 根证书尚未安装，建议先安装后再抓包（仍可尝试继续）",
+                fg=THEME["orange"])
+            # 不 return，允许继续
+
         self._btn_capture.configure(state="disabled", text="启动中...")
 
         def worker():
@@ -892,15 +938,175 @@ class LOLHistoryApp:
     def _handle_capture_fail(self, missing: list):
         """处理抓包部分失败。"""
         self._capture_status.configure(
-            text=f"⚠ 部分捕获: 仍缺 {', '.join(missing)}\n请确认已登录 WeGame 且根证书已安装（首次使用需管理员权限安装）",
+            text=f"⚠ 部分捕获: 仍缺 {', '.join(missing)}\n"
+                 f"请确认: ① 已登录 WeGame  ② 根证书已安装（点击上方按钮安装，无需管理员）",
             fg=THEME["orange"])
         self._btn_capture.configure(state="normal", text="🔄 重新抓包")
         self._update_cookie_button()
+        # 刷新证书状态
+        self._update_cert_status_ui(self._check_cert_status())
 
     def _handle_capture_error(self, msg: str):
         """处理抓包错误。"""
         self._capture_status.configure(text=f"❌ {msg}", fg=THEME["red"])
         self._btn_capture.configure(state="normal", text="🔄 重试抓包")
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 根证书管理
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def _check_cert_status(self) -> str:
+        """检测根证书状态。返回 'installed' | 'exists' | 'missing'。"""
+        try:
+            from lolhistory._capture_cookies import _find_ca_cert
+            cert_path = _find_ca_cert()
+            if cert_path:
+                # 证书文件存在，尝试检查是否已安装到信任存储
+                import subprocess
+                result = subprocess.run(
+                    ["certutil", "-user", "-store", "Root"],
+                    capture_output=True, text=True,
+                )
+                if "mitmproxy" in result.stdout:
+                    return "installed"
+                return "exists"
+            return "missing"
+        except ImportError:
+            return "missing"
+        except Exception:
+            return "missing"
+
+    def _update_cert_status_ui(self, status: str):
+        """根据证书状态更新 UI 元素。"""
+        if status == "installed":
+            self._cert_status_icon.configure(text="✅", fg=THEME["green"])
+            self._cert_status_text.configure(
+                text="根证书已安装 — 抓包功能已就绪",
+                fg=THEME["green"])
+            self._btn_install_cert.configure(
+                text="🔒 重新安装根证书",
+                state="normal")
+        elif status == "exists":
+            self._cert_status_icon.configure(text="⚠", fg=THEME["orange"])
+            self._cert_status_text.configure(
+                text="根证书文件已生成但尚未安装到系统 — 请点击右侧按钮安装（无需管理员权限）",
+                fg=THEME["orange"])
+            self._btn_install_cert.configure(
+                text="🔒 安装根证书（仅需一次）",
+                state="normal")
+        else:  # missing
+            self._cert_status_icon.configure(text="❌", fg=THEME["red"])
+            self._cert_status_text.configure(
+                text="根证书尚未生成 — 请先点击右侧按钮生成并安装（仅需一次，约 5 秒）",
+                fg=THEME["red"])
+            self._btn_install_cert.configure(
+                text="🔒 生成并安装根证书",
+                state="normal")
+
+    def _install_cert(self):
+        """在后台线程生成并安装根证书。"""
+        self._btn_install_cert.configure(state="disabled", text="⏳ 处理中...")
+        self._cert_status_text.configure(
+            text="正在处理根证书，请稍候...", fg=THEME["orange"])
+
+        def worker():
+            try:
+                from lolhistory._capture_cookies import _find_ca_cert, install_cert
+
+                cert_path = _find_ca_cert()
+
+                if not cert_path:
+                    # 证书文件不存在 — 需要先启动 mitmproxy 生成证书
+                    self._msg_queue.put(("log", "根证书文件不存在，正在启动 mitmproxy 生成证书...\n"))
+                    self._msg_queue.put(("cert_status", "generating"))
+
+                    import asyncio
+                    import socket as _socket
+                    from mitmproxy import options as _opts
+                    from mitmproxy.tools.dump import DumpMaster
+
+                    # 找一个空闲端口
+                    port = 8081
+                    opts = _opts.Options(
+                        listen_host="127.0.0.1",
+                        listen_port=port,
+                        ssl_insecure=True,
+                    )
+                    loop = asyncio.new_event_loop()
+                    master = DumpMaster(opts, loop=loop)
+
+                    async def _start():
+                        await master.run()
+
+                    def _run_loop():
+                        asyncio.set_event_loop(loop)
+                        try:
+                            loop.run_until_complete(_start())
+                        except Exception:
+                            pass
+
+                    t = threading.Thread(target=_run_loop, daemon=True)
+                    t.start()
+
+                    # 等待证书文件生成（最多等 10 秒）
+                    cert_path = None
+                    for _ in range(100):
+                        time.sleep(0.1)
+                        cert_path = _find_ca_cert()
+                        if cert_path:
+                            break
+
+                    # 停止 mitmproxy
+                    try:
+                        master.shutdown()
+                    except Exception:
+                        pass
+                    try:
+                        loop.call_soon_threadsafe(loop.stop)
+                    except Exception:
+                        pass
+                    t.join(timeout=3)
+                    try:
+                        loop.close()
+                    except Exception:
+                        pass
+
+                if not cert_path:
+                    self._msg_queue.put(("cert_error", "未能生成根证书文件，请检查 mitmproxy 是否正确安装"))
+                    return
+
+                # 安装证书
+                self._msg_queue.put(("cert_status", "installing"))
+                result = install_cert()
+
+                if result:
+                    self._msg_queue.put(("cert_done",))
+                else:
+                    self._msg_queue.put(("cert_error",
+                        "证书安装失败，请尝试以管理员身份运行，或手动安装"))
+
+            except ImportError as e:
+                self._msg_queue.put(("cert_error",
+                    f"缺少依赖: {e}\n请运行: pip install mitmproxy"))
+            except Exception as e:
+                self._msg_queue.put(("cert_error",
+                    f"证书操作失败: {e}\n{traceback.format_exc()}"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _handle_cert_done(self):
+        """证书安装完成。"""
+        self._update_cert_status_ui("installed")
+        self._capture_status.configure(
+            text="✅ 根证书已安装，可以开始抓包了！", fg=THEME["green"])
+
+    def _handle_cert_error(self, msg: str):
+        """证书操作失败。"""
+        # 重新检测当前状态
+        status = self._check_cert_status()
+        self._update_cert_status_ui(status)
+        self._capture_status.configure(
+            text=f"❌ {msg}", fg=THEME["red"])
 
     def _go_to_cookie(self):
         """从欢迎页跳到 Cookie 页。"""
@@ -1578,6 +1784,21 @@ class LOLHistoryApp:
 
                 elif msg_type == "capture_error":
                     self._handle_capture_error(msg[1])
+
+                elif msg_type == "cert_status":
+                    # 证书操作进度更新
+                    if msg[1] == "generating":
+                        self._cert_status_text.configure(
+                            text="正在生成根证书文件...", fg=THEME["orange"])
+                    elif msg[1] == "installing":
+                        self._cert_status_text.configure(
+                            text="正在安装根证书到系统...", fg=THEME["orange"])
+
+                elif msg_type == "cert_done":
+                    self._handle_cert_done()
+
+                elif msg_type == "cert_error":
+                    self._handle_cert_error(msg[1])
 
                 elif msg_type == "fetch_done":
                     self._handle_fetch_done(msg[1], msg[2], msg[3])
