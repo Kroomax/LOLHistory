@@ -1,16 +1,23 @@
 """生成演示用模拟数据，用于项目展示。
 
 用法:
-    .venv/Scripts/python generate_demo_data.py              # 生成 db + 报告
-    .venv/Scripts/python generate_demo_data.py --db-only    # 仅生成数据库
-    .venv/Scripts/python generate_demo_data.py --games 500  # 自定义对局数
+    .venv/Scripts/python demo/demo_generate_data.py        # 生成 db + 报告
+    .venv/Scripts/python demo/demo_generate_data.py --db-only    # 仅生成数据库
+    .venv/Scripts/python demo/demo_generate_data.py --games 500  # 自定义对局数
 """
 
+import sys
 import sqlite3
 import random
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
+
+# 确保项目根目录在 sys.path 中，以便 from lolhistory 导入
+# 当脚本在 demo/ 子目录中运行时，sys.path[0] 是 demo/ 而非项目根目录
+_project_root = str(Path(__file__).resolve().parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
 # ── 常量 ────────────────────────────────────────────────────────────────────
 
@@ -820,7 +827,6 @@ if __name__ == "__main__":
 
     if not args.db_only:
         print(f"\n正在生成分析报告...")
-        # 修改 sys.argv 来调用 _analysis.generate_report
         from lolhistory._analysis import generate_report
         path = generate_report(db_path=args.db, output_path=args.output)
         print(f"\n[OK] 演示报告已生成: {path}")
