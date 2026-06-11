@@ -155,7 +155,7 @@ CREATE TABLE IF NOT EXISTS match_detail (
 
 SQL_CREATE_SUMMONER_PROFILE = """
 CREATE TABLE IF NOT EXISTS summoner_profile (
-    puin                 TEXT PRIMARY KEY,
+    puin                 TEXT NOT NULL,
     -- 召唤师基本信息 (GetSummonerInfo)
     summoner_id          INTEGER,
     summoner_name        TEXT,
@@ -210,7 +210,8 @@ CREATE TABLE IF NOT EXISTS summoner_profile (
     longest_game_num     INTEGER,
     shortest_game_num    INTEGER,
     -- 元数据
-    last_fetch_time      TEXT
+    last_fetch_time      TEXT,
+    PRIMARY KEY (puin, area)
 )
 """
 
@@ -229,9 +230,10 @@ CREATE TABLE IF NOT EXISTS champion_mastery (
     sid_total       INTEGER,
     sid_wins        INTEGER,
     sid_exp         INTEGER,
+    area            INTEGER,
     lanes_json      TEXT,
     last_fetch_time TEXT,
-    PRIMARY KEY (puin, champion_id)
+    PRIMARY KEY (puin, champion_id, area)
 )
 """
 
@@ -251,14 +253,15 @@ CREATE TABLE IF NOT EXISTS season_history (
     team_tier       INTEGER,
     team_win_point  INTEGER,
     team_queue      INTEGER,
+    area            INTEGER,
     last_fetch_time TEXT,
-    PRIMARY KEY (puin, sid)
+    PRIMARY KEY (puin, sid, area)
 )
 """
 
 SQL_CREATE_CAREER_OVERVIEW = """
 CREATE TABLE IF NOT EXISTS career_overview (
-    puin                TEXT PRIMARY KEY,
+    puin                TEXT NOT NULL,
     total_match_games   INTEGER,
     total_match_wins    INTEGER,
     total_match_losses  INTEGER,
@@ -277,7 +280,9 @@ CREATE TABLE IF NOT EXISTS career_overview (
     total_ai_games      INTEGER,
     total_ai_wins       INTEGER,
     total_clash_games   INTEGER,
-    last_fetch_time     TEXT
+    area                INTEGER,
+    last_fetch_time     TEXT,
+    PRIMARY KEY (puin, area)
 )
 """
 
@@ -599,7 +604,7 @@ CHAMPION_MASTERY_COLUMNS = [
     "puin", "champion_id", "total_games", "wins", "win_rate",
     "mastery_exp", "expire_day", "instance_id",
     "sid_total", "sid_wins", "sid_exp",
-    "lanes_json", "last_fetch_time",
+    "area", "lanes_json", "last_fetch_time",
 ]
 
 SEASON_HISTORY_COLUMNS = [
@@ -607,7 +612,7 @@ SEASON_HISTORY_COLUMNS = [
     "tier", "win_point", "queue",
     "team_total", "team_wins", "team_losses",
     "team_tier", "team_win_point", "team_queue",
-    "last_fetch_time",
+    "area", "last_fetch_time",
 ]
 
 CAREER_OVERVIEW_COLUMNS = [
@@ -617,7 +622,7 @@ CAREER_OVERVIEW_COLUMNS = [
     "total_teamrank_games", "total_teamrank_wins", "total_teamrank_losses",
     "total_all_games", "total_all_wins", "total_all_losses",
     "total_ai_games", "total_ai_wins", "total_clash_games",
-    "last_fetch_time",
+    "area", "last_fetch_time",
 ]
 
 
@@ -727,7 +732,8 @@ def _map_detail_rows(game_id: str, players: list[dict], self_openid: str,
 
 
 def _map_summoner_profile_to_row(info: dict, career: dict | None,
-                                   puin: str, fetched_at: str) -> dict:
+                                   puin: str, fetched_at: str,
+                                   area: int = 1) -> dict:
     """将解析后的召唤师信息+生涯统计映射为 summoner_profile 行。"""
     row = {
         "puin": puin,
@@ -741,7 +747,7 @@ def _map_summoner_profile_to_row(info: dict, career: dict | None,
         "discredit": info.get("点踩", 0),
         "top_of_canyon": 1 if info.get("峡谷之巅") else 0,
         "openid": info.get("openid", ""),
-        "area": info.get("大区", 0),
+        "area": area,
         "season_sid": info.get("赛季ID", 0),
         "season_total": info.get("赛季总场次", 0),
         "season_wins": info.get("赛季胜场", 0),
@@ -788,7 +794,8 @@ def _map_summoner_profile_to_row(info: dict, career: dict | None,
     return row
 
 
-def _map_champion_mastery_to_row(champion: dict, puin: str, fetched_at: str) -> dict:
+def _map_champion_mastery_to_row(champion: dict, puin: str, fetched_at: str,
+                                 area: int = 1) -> dict:
     """将解析后的英雄熟练度字典映射为 champion_mastery 行。"""
     return {
         "puin": puin,
@@ -802,12 +809,14 @@ def _map_champion_mastery_to_row(champion: dict, puin: str, fetched_at: str) -> 
         "sid_total": champion.get("赛季总场", 0),
         "sid_wins": champion.get("赛季胜场", 0),
         "sid_exp": champion.get("赛季经验", 0),
+        "area": area,
         "lanes_json": champion.get("常用分路JSON", "[]"),
         "last_fetch_time": fetched_at,
     }
 
 
-def _map_season_history_to_row(season: dict, puin: str, fetched_at: str) -> dict:
+def _map_season_history_to_row(season: dict, puin: str, fetched_at: str,
+                               area: int = 1) -> dict:
     """将解析后的赛季数据映射为 season_history 行。"""
     return {
         "puin": puin,
@@ -824,11 +833,13 @@ def _map_season_history_to_row(season: dict, puin: str, fetched_at: str) -> dict
         "team_tier": season.get("组排段位", 255),
         "team_win_point": season.get("组排胜点", 0),
         "team_queue": season.get("组排队列", 0),
+        "area": area,
         "last_fetch_time": fetched_at,
     }
 
 
-def _map_career_overview_to_row(battle_count: dict, puin: str, fetched_at: str) -> dict:
+def _map_career_overview_to_row(battle_count: dict, puin: str, fetched_at: str,
+                                area: int = 1) -> dict:
     """将解析后的战斗总览映射为 career_overview 行。"""
     return {
         "puin": puin,
@@ -850,6 +861,7 @@ def _map_career_overview_to_row(battle_count: dict, puin: str, fetched_at: str) 
         "total_ai_games": battle_count.get("人机总场", 0),
         "total_ai_wins": battle_count.get("人机胜场", 0),
         "total_clash_games": battle_count.get("clash总场", 0),
+        "area": area,
         "last_fetch_time": fetched_at,
     }
 
@@ -875,6 +887,58 @@ def _ts_to_iso(ts) -> str:
         return datetime.fromtimestamp(t).strftime("%Y-%m-%d %H:%M:%S")
     except (ValueError, OSError):
         return ""
+
+
+def _rebuild_table_with_area_pk(db: sqlite3.Connection, table: str,
+                                 columns_list: list[str],
+                                 pk_columns: str):
+    """将旧表重建为 area 包含在复合主键中的新表。
+
+    Args:
+        db: SQLite 连接。
+        table: 表名。
+        columns_list: 列名列表（来自模块级常量如 SUMMONER_PROFILE_COLUMNS）。
+        pk_columns: 新主键定义字符串，如 ``"puin, area"``。
+    """
+    # 检查当前主键是否已包含 area
+    info = db.execute(f"PRAGMA table_info({table})").fetchall()
+    current_pk_cols = {r[1] for r in info if r[5] > 0}
+    if 'area' in current_pk_cols:
+        logger.debug("表 %s 的主键已包含 area，跳过迁移", table)
+        return
+
+    # 从实表中获取已有列的类型和约束
+    existing = {r[1]: r for r in info}
+
+    # 只取实际存在于表中的列
+    effective_cols = [c for c in columns_list if c in existing]
+
+    # 构建列定义（保留类型 + NOT NULL + DEFAULT）
+    col_defs = []
+    for col in effective_cols:
+        r = existing[col]
+        parts = [col, r[2]]        # name + type
+        if r[3]:                   # notnull
+            parts.append("NOT NULL")
+        if r[4] is not None:       # dflt_value
+            # SQLite 的 dflt_value 是字符串，直接拼入 SQL
+            parts.append(f"DEFAULT {r[4]}")
+        col_defs.append(" ".join(parts))
+
+    # 加新主键
+    col_defs.append(f"PRIMARY KEY ({pk_columns})")
+
+    # 执行迁移：rename → create → copy → drop
+    old_name = f"{table}_old_v2"
+    db.execute(f"ALTER TABLE {table} RENAME TO {old_name}")
+    db.execute(f"CREATE TABLE {table} ({', '.join(col_defs)})")
+
+    cols = ", ".join(effective_cols)
+    db.execute(f"INSERT OR IGNORE INTO {table}({cols}) SELECT {cols} FROM {old_name}")
+    db.execute(f"DROP TABLE {old_name}")
+
+    logger.warning("表 %s 已迁移：主键改为 (%s)。旧表中被覆盖的数据可能已丢失，请重新拉取。",
+                   table, pk_columns)
 
 
 def export_sqlite(
@@ -930,6 +994,36 @@ def export_sqlite(
         db.execute("ALTER TABLE match_detail ADD COLUMN area INTEGER DEFAULT 1")
     except sqlite3.OperationalError:
         pass
+    # v3 辅表加 area 列（旧数据库无此列，补上即兼容）
+    try:
+        db.execute("ALTER TABLE champion_mastery ADD COLUMN area INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        db.execute("ALTER TABLE season_history ADD COLUMN area INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        db.execute("ALTER TABLE career_overview ADD COLUMN area INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass
+    # 极旧数据库：summoner_profile 可能缺少 area 列
+    try:
+        db.execute("ALTER TABLE summoner_profile ADD COLUMN area INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+    # ── v4 迁移：确保 4 张辅助表的复合主键包含 area ─────────────────────────────
+    # 旧表（area 不在 PK 中）会导致不同大区的数据互相覆盖（INSERT OR REPLACE 按 puin 替换）。
+    # 重建表为新主键，INSERT OR IGNORE 保留最后一次写入的数据（旧数据已丢失则需重拉）。
+    _rebuild_table_with_area_pk(db, "summoner_profile",
+                                 SUMMONER_PROFILE_COLUMNS, "puin, area")
+    _rebuild_table_with_area_pk(db, "champion_mastery",
+                                 CHAMPION_MASTERY_COLUMNS, "puin, champion_id, area")
+    _rebuild_table_with_area_pk(db, "season_history",
+                                 SEASON_HISTORY_COLUMNS, "puin, sid, area")
+    _rebuild_table_with_area_pk(db, "career_overview",
+                                 CAREER_OVERVIEW_COLUMNS, "puin, area")
 
     # 清理旧表（v1 遗留，已不再使用）
     db.execute("DROP TABLE IF EXISTS champion_mastery_snapshot")
@@ -1010,7 +1104,7 @@ def export_sqlite(
 
         # 写入 summoner_profile（INSERT OR REPLACE）
         profile_row = _map_summoner_profile_to_row(
-            summoner_info, summoner_career, puin, fetched_at)
+            summoner_info, summoner_career, puin, fetched_at, area=area)
         profile_placeholders = ", ".join("?" * len(SUMMONER_PROFILE_COLUMNS))
         insert_profile = (
             f"INSERT OR REPLACE INTO summoner_profile "
@@ -1033,9 +1127,10 @@ def export_sqlite(
             f"VALUES ({champ_placeholders})"
         )
         champ_rows = [
-            tuple(_map_champion_mastery_to_row(c, puin, champ_fetched_at)[col]
+            tuple(_map_champion_mastery_to_row(c, puin, champ_fetched_at, area=area)[col]
                   for col in CHAMPION_MASTERY_COLUMNS)
             for c in champions
+            if (c.get("总场次", 0) or 0) > 0
         ]
         db.executemany(insert_champ, champ_rows)
         logger.info("SQLite champion_mastery: %d 行", len(champ_rows))
@@ -1052,26 +1147,32 @@ def export_sqlite(
             f"VALUES ({season_placeholders})"
         )
         season_rows = [
-            tuple(_map_season_history_to_row(s, puin, br_fetched_at)[col]
+            tuple(_map_season_history_to_row(s, puin, br_fetched_at, area=area)[col]
                   for col in SEASON_HISTORY_COLUMNS)
             for s in battle_report.get("season_list", [])
+            if (s.get("总场次", 0) or 0) > 0 or (s.get("组排总场", 0) or 0) > 0
         ]
         if season_rows:
             db.executemany(insert_season, season_rows)
         logger.info("SQLite season_history: %d 行", len(season_rows))
 
-        # career_overview: INSERT OR REPLACE
+        # career_overview: INSERT OR REPLACE（仅在有场次数据时写入）
         career_placeholders = ", ".join("?" * len(CAREER_OVERVIEW_COLUMNS))
         insert_career = (
             f"INSERT OR REPLACE INTO career_overview "
             f"({', '.join(CAREER_OVERVIEW_COLUMNS)}) "
             f"VALUES ({career_placeholders})"
         )
-        career_row = _map_career_overview_to_row(
-            battle_report.get("battle_count", {}), puin, br_fetched_at)
-        db.execute(insert_career,
-                   tuple(career_row[col] for col in CAREER_OVERVIEW_COLUMNS))
-        logger.info("SQLite career_overview: 已更新")
+        career_bc = battle_report.get("battle_count", {})
+        career_total = (career_bc.get("全部总场", 0) or 0)
+        if career_total > 0:
+            career_row = _map_career_overview_to_row(
+                career_bc, puin, br_fetched_at, area=area)
+            db.execute(insert_career,
+                       tuple(career_row[col] for col in CAREER_OVERVIEW_COLUMNS))
+            logger.info("SQLite career_overview: 已更新")
+        else:
+            logger.info("SQLite career_overview: 跳过（大区无对局数据）")
 
     # 写入注释元数据 (INSERT OR REPLACE, 幂等)
     _ensure_table_comments(db)

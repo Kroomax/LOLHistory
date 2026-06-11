@@ -203,7 +203,8 @@ class LOLHistoryApp:
 
         # ── 状态变量 ──────────────────────────────────────────────────────
         self._msg_queue: queue.Queue = queue.Queue()
-        self._stage = 0           # 0=Welcome, 1=Cookie, 2=Fetch, 3=Complete
+        self._stage = 0           # 0=Welcome, 1=Cookie, 2=Region, 3=Fetch, 4=Complete
+        self._selected_areas: list[int] = [1]  # 默认仅艾欧尼亚
         self._cookies: dict = {}
         self._fetch_thread: Optional[threading.Thread] = None
         self._cancel_flag = threading.Event()
@@ -349,7 +350,7 @@ class LOLHistoryApp:
         self._step_labels: list[tk.Label] = []
         self._step_connectors: list[tk.Label] = []
 
-        step_names = ["① 欢迎", "② 获取凭据", "③ 拉取数据", "④ 完成"]
+        step_names = ["① 欢迎", "② 获取凭据", "③ 选择大区", "④ 拉取数据", "⑤ 完成"]
         for i, name in enumerate(step_names):
             if i > 0:
                 conn = tk.Label(steps_frame, text=" ─ ", font=FONT_SMALL,
@@ -397,10 +398,12 @@ class LOLHistoryApp:
         self._pages[0] = self._build_welcome_page()
         # 页面 1: Cookie
         self._pages[1] = self._build_cookie_page()
-        # 页面 2: 拉取数据
-        self._pages[2] = self._build_fetch_page()
-        # 页面 3: 完成
-        self._pages[3] = self._build_complete_page()
+        # 页面 2: 选择大区
+        self._pages[2] = self._build_region_page()
+        # 页面 3: 拉取数据
+        self._pages[3] = self._build_fetch_page()
+        # 页面 4: 完成
+        self._pages[4] = self._build_complete_page()
 
         # 默认显示第 0 页
         self._show_page(0)
@@ -457,7 +460,7 @@ class LOLHistoryApp:
             self._btn_primary.pack(side="right")
 
         elif stage == 1:
-            # Cookie 页: 后退 + 下一步
+            # Cookie 页: 后退 + 下一步（到大区选择）
             tk.Button(
                 self._footer_left, text="← 返回", font=FONT_BTN_SM,
                 bg=THEME["card"], fg=THEME["text2"], activebackground=THEME["hover"],
@@ -467,17 +470,35 @@ class LOLHistoryApp:
             ).pack(side="left")
 
             self._btn_primary = tk.Button(
-                self._footer_right, text="连接并拉取数据 →", font=FONT_BTN,
+                self._footer_right, text="下一步 →", font=FONT_BTN,
                 bg=THEME["gold"], fg=THEME["bg"], activebackground="#d4b87a",
                 activeforeground=THEME["bg"], relief="flat",
                 padx=28, pady=10, cursor="hand2", borderwidth=0,
-                command=self._start_fetch, state="disabled")
+                command=lambda: self._show_page(2), state="disabled")
             self._btn_primary.pack(side="right")
 
             # 检查是否已有可用 Cookie
             self.root.after(100, self._update_cookie_button)
 
         elif stage == 2:
+            # 大区选择页: 后退 + 开始拉取
+            tk.Button(
+                self._footer_left, text="← 返回", font=FONT_BTN_SM,
+                bg=THEME["card"], fg=THEME["text2"], activebackground=THEME["hover"],
+                activeforeground=THEME["text"], relief="flat",
+                padx=16, pady=8, cursor="hand2", borderwidth=0,
+                command=lambda: self._show_page(1)
+            ).pack(side="left")
+
+            self._btn_primary = tk.Button(
+                self._footer_right, text="开始拉取数据 →", font=FONT_BTN,
+                bg=THEME["gold"], fg=THEME["bg"], activebackground="#d4b87a",
+                activeforeground=THEME["bg"], relief="flat",
+                padx=28, pady=10, cursor="hand2", borderwidth=0,
+                command=self._start_fetch)
+            self._btn_primary.pack(side="right")
+
+        elif stage == 3:
             # 拉取页: 取消按钮
             tk.Button(
                 self._footer_left, text="✕ 取消", font=FONT_BTN_SM,
@@ -487,7 +508,7 @@ class LOLHistoryApp:
                 command=self._cancel_fetch
             ).pack(side="left")
 
-        elif stage == 3:
+        elif stage == 4:
             # 完成页: 仅保留重新拉取按钮（打开报告/文件夹在页面内）
             tk.Button(
                 self._footer_left, text="🔄 重新获取数据", font=FONT_BTN_SM,
@@ -816,7 +837,7 @@ class LOLHistoryApp:
             return
         cookies = self._collect_cookies()
         if cookies and len(cookies) >= 4:
-            self._btn_primary.configure(state="normal", text="连接并拉取数据 →")
+            self._btn_primary.configure(state="normal", text="下一步 →")
         else:
             self._btn_primary.configure(state="disabled",
                                          text=f"还需 {4 - len(cookies)} 项凭据")
@@ -1148,7 +1169,221 @@ class LOLHistoryApp:
         self._show_page(1)
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # 页面 2: 数据拉取页
+    # 页面 2: 大区选择页
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def _create_area_card(self, parent: tk.Frame, aid: int,
+                          info: dict, var: tk.BooleanVar) -> tk.Frame:
+        """创建一张可点击的大区卡片。
+
+        卡片默认是无边框深色背景，悬停时变亮，选中时金色边框 + 橙色底。
+        点击卡片任意区域即可切换选中状态。
+        """
+        # 外框 — highlightbackground 模拟边框
+        card = tk.Frame(
+            parent,
+            bg=THEME["card"],
+            highlightbackground=THEME["border"],
+            highlightthickness=1,
+            highlightcolor=THEME["border"],
+            padx=10, pady=5,
+            cursor="hand2",
+        )
+
+        # 内容
+        _id = tk.Label(card, text=f"{aid:02d}",
+                       font=("Consolas", 11, "bold"),
+                       bg=THEME["card"], fg=THEME["gold"],
+                       width=3, anchor="w")
+        _id.pack(side="left", padx=(0, 6))
+
+        _name = tk.Label(card, text=info["name"],
+                         font=("Microsoft YaHei", 12),
+                         bg=THEME["card"], fg=THEME["text"],
+                         anchor="w")
+        _name.pack(side="left", fill="x", expand=True)
+
+        _isp = tk.Label(card, text=info["isp"],
+                        font=("Microsoft YaHei", 9),
+                        bg=THEME["card"], fg=THEME["text2"],
+                        padx=5, pady=1)
+        _isp.pack(side="right")
+
+        # 挂载子控件引用供样式更新
+        card._id_lbl = _id
+        card._name_lbl = _name
+        card._isp_lbl = _isp
+
+        # ── 交互绑定 ─────────────────────────────────────────────
+        def toggle(_event=None):
+            var.set(not var.get())
+            self._update_card_style(aid)
+            self._update_region_count()
+
+        def on_enter(_event=None):
+            if not var.get():
+                _set_bg(THEME["hover"], bold_border=False)
+
+        def on_leave(_event=None):
+            if not var.get():
+                _set_bg(THEME["card"], bold_border=False)
+
+        def _set_bg(bg, bold_border=False):
+            card.configure(bg=bg,
+                           highlightbackground=THEME["gold"] if bold_border else THEME["border"])
+            _id.configure(bg=bg)
+            _name.configure(bg=bg)
+
+        for w in (card, _id, _name, _isp):
+            w.bind("<Button-1>", toggle)
+            w.bind("<Enter>", on_enter)
+            w.bind("<Leave>", on_leave)
+
+        return card
+
+    def _update_card_style(self, aid: int):
+        """根据选中状态刷新单张卡片样式。"""
+        card = getattr(self, "_region_cards", {}).get(aid)
+        if not card:
+            return
+        var = getattr(self, "_region_vars", {}).get(aid)
+        if not var:
+            return
+
+        if var.get():
+            bg = "#243040"  # 选中态：比 card 亮一档
+            border = THEME["gold"]
+        else:
+            bg = THEME["card"]
+            border = THEME["border"]
+
+        card.configure(bg=bg, highlightbackground=border)
+        card._id_lbl.configure(bg=bg)
+        card._name_lbl.configure(bg=bg)
+
+    def _update_all_cards_style(self):
+        """刷新全部卡片样式。"""
+        for aid in getattr(self, "_region_vars", {}):
+            self._update_card_style(aid)
+
+    def _build_region_page(self) -> tk.Frame:
+        """构建大区选择页 — 卡片式三列网格。"""
+        from lolhistory._data import GAME_AREA_INFO, get_game_area_name
+
+        page = tk.Frame(self._content, bg=THEME["bg"])
+
+        # ── 标题 ──────────────────────────────────────────────────
+        title = tk.Label(page, text="选择游戏大区", font=FONT_TITLE,
+                         bg=THEME["bg"], fg=THEME["gold"])
+        title.pack(anchor="w", pady=(0, 4))
+
+        sub = tk.Label(page, text="点击卡片即可选中/取消，支持多选",
+                       font=FONT_SMALL, bg=THEME["bg"], fg=THEME["text2"])
+        sub.pack(anchor="w", pady=(0, 12))
+
+        # ── 顶栏 ──────────────────────────────────────────────────
+        top_bar = tk.Frame(page, bg=THEME["bg"])
+        top_bar.pack(fill="x", pady=(0, 12))
+
+        self._region_count_lbl = tk.Label(top_bar, text="已选择 01/29 个大区",
+                                          font=FONT_SMALL, bg=THEME["bg"],
+                                          fg=THEME["text2"])
+        self._region_count_lbl.pack(side="left")
+
+        self._is_all_areas_mode = tk.BooleanVar(value=False)
+        self._all_mode_cb = tk.Checkbutton(
+            top_bar, text="全部大区（仅拉取等级≥20的账号）",
+            variable=self._is_all_areas_mode,
+            bg=THEME["bg"], fg=THEME["gold"], selectcolor=THEME["card"],
+            activebackground=THEME["hover"], activeforeground=THEME["gold"],
+            font=("Microsoft YaHei", 11, "bold"),
+            command=self._on_all_mode_toggle,
+        )
+        self._all_mode_cb.pack(side="left", padx=(16, 0))
+
+        btn_frame = tk.Frame(top_bar, bg=THEME["bg"])
+        btn_frame.pack(side="right")
+
+        def _select_all():
+            for var in self._region_vars.values():
+                var.set(True)
+            self._update_all_cards_style()
+            self._update_region_count()
+
+        def _deselect_all():
+            for var in self._region_vars.values():
+                var.set(False)
+            self._update_all_cards_style()
+            self._update_region_count()
+
+        tk.Button(btn_frame, text="全选", font=FONT_BTN_SM,
+                  bg=THEME["card"], fg=THEME["text"], activebackground=THEME["hover"],
+                  activeforeground=THEME["text"], relief="flat",
+                  padx=12, pady=4, cursor="hand2", borderwidth=0,
+                  command=_select_all).pack(side="left", padx=(0, 6))
+        tk.Button(btn_frame, text="取消全选", font=FONT_BTN_SM,
+                  bg=THEME["card"], fg=THEME["text"], activebackground=THEME["hover"],
+                  activeforeground=THEME["text"], relief="flat",
+                  padx=12, pady=4, cursor="hand2", borderwidth=0,
+                  command=_deselect_all).pack(side="left")
+
+        # ── 三列卡片网格（无滚动条） ──────────────────────────────
+        sorted_areas = sorted(GAME_AREA_INFO.items())  # 按 ID 升序
+        self._region_vars: dict[int, tk.BooleanVar] = {}
+        self._region_cards: dict[int, tk.Frame] = {}
+
+        grid_frame = tk.Frame(page, bg=THEME["bg"])
+        grid_frame.pack(fill="both", expand=True)
+
+        # 三列均匀分配
+        for c in range(3):
+            grid_frame.columnconfigure(c, weight=1, uniform="col")
+
+        for idx, (aid, info) in enumerate(sorted_areas):
+            col = idx % 3
+            row = idx // 3
+
+            var = tk.BooleanVar(value=(aid == 1))  # 默认只选艾欧尼亚
+            self._region_vars[aid] = var
+
+            card = self._create_area_card(grid_frame, aid, info, var)
+            card.grid(row=row, column=col, sticky="ew", padx=5, pady=3)
+            self._region_cards[aid] = card
+
+        # 刷新初始选中状态（卡片创建时 _region_cards 尚未填充，需统一刷一次）
+        self._update_all_cards_style()
+
+        return page
+
+    def _on_all_mode_toggle(self):
+        """全部模式切换：选中时全选所有大区。"""
+        if not hasattr(self, "_region_vars"):
+            return
+        if self._is_all_areas_mode.get():
+            for var in self._region_vars.values():
+                var.set(True)
+            self._update_all_cards_style()
+            total = len(self._region_vars)
+            self._region_count_lbl.config(text=f"已选择 {total:02d}/{total} 个大区")
+            self._selected_areas = list(self._region_vars.keys())
+
+    def _update_region_count(self):
+        """更新大区选择计数，并检查是否应取消全部模式。"""
+        if not hasattr(self, "_region_vars"):
+            return
+        selected = sum(1 for v in self._region_vars.values() if v.get())
+        total = len(self._region_vars)
+        self._region_count_lbl.config(text=f"已选择 {selected:02d}/{total} 个大区")
+        self._selected_areas = [aid for aid, var in self._region_vars.items() if var.get()]
+        if not self._selected_areas:
+            self._selected_areas = [1]
+
+        # 用户手动调整单个大区时，自动取消全部模式
+        if hasattr(self, "_is_all_areas_mode") and self._is_all_areas_mode.get():
+            self._is_all_areas_mode.set(False)
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 页面 3: 数据拉取页
     # ═══════════════════════════════════════════════════════════════════════════
 
     def _build_fetch_page(self) -> tk.Frame:
@@ -1161,12 +1396,6 @@ class LOLHistoryApp:
         self._fetch_sub = tk.Label(page, text="准备连接 WeGame 服务器", font=FONT_SMALL,
                                     bg=THEME["bg"], fg=THEME["text2"])
         self._fetch_sub.pack(anchor="w", pady=(0, 4))
-
-        self._fetch_region_hint = tk.Label(
-            page,
-            text="📌 当前默认拉取艾欧尼亚大区数据，游戏大区切换功能敬请期待",
-            font=FONT_SMALL, bg=THEME["bg"], fg=THEME["text3"])
-        self._fetch_region_hint.pack(anchor="w", pady=(0, 16))
 
         # ── 状态卡片 ────────────────────────────────────────────────────────
         status_card = tk.Frame(page, bg=THEME["card"],
@@ -1298,7 +1527,11 @@ class LOLHistoryApp:
         self._cookies = cookies
         _save_cookies(cookies)
 
-        self._show_page(2)
+        self._show_page(3)
+        # 等待旧线程结束（如果用户取消后又立即重新拉取）
+        if self._fetch_thread and self._fetch_thread.is_alive():
+            self._cancel_flag.set()
+            self._fetch_thread.join(timeout=3)
         self._cancel_flag.clear()
         self._log_lines.clear()
         self._log_text.configure(state="normal")
@@ -1318,14 +1551,17 @@ class LOLHistoryApp:
             self._fetch_title.configure(text="已取消")
             self._fetch_sub.configure(text="数据拉取已被用户中止")
             self._status_connect.configure(text="⏹ 已取消", fg=THEME["red"])
+            # 返回大区选择页，允许用户重新拉取
+            self._show_page(2)
 
     def _fetch_worker(self):
         """后台线程 — 执行完整的数据拉取 + 分析流程。"""
         try:
+            from lolhistory._data import get_game_area_name
             cookies = self._cookies
             delay = 200
             skip_tft = True
-            area = 1
+            areas = getattr(self, "_selected_areas", [1])
 
             # 捕获 stdout/stderr
             old_stdout = sys.stdout
@@ -1360,83 +1596,95 @@ class LOLHistoryApp:
                 self._msg_queue.put(("status", "connect", "✅ 连接成功", THEME["green"]))
                 self._msg_queue.put(("progress", 5, ""))
 
-                # ── 阶段 2: 召唤师信息 ───────────────────────────────────────
-                self._msg_queue.put(("status", "summoner", "⏳ 获取召唤师信息..."))
-                self._msg_queue.put(("progress", 8, ""))
+                total_all_areas = 0
+                for area in areas:
+                    area_name = get_game_area_name(area)
+                    self._msg_queue.put(("log", f"\n===== 大区: {area_name} =====\n"))
 
-                summoner_profile = None
-                summoner_career = None
-                champions_data = None
-                battle_report_data = None
-                openid = ""
+                    # ── 阶段 2: 召唤师信息 ───────────────────────────────────
+                    self._msg_queue.put(("status", "summoner", f"⏳ [{area_name}] 获取召唤师信息..."))
+                    self._msg_queue.put(("progress", 8, ""))
 
-                try:
-                    si = client.get_summoner_info(area=area)
-                    summoner_profile = parse_summoner_info(si)
-                    name = summoner_profile.get("召唤师名称", "Unknown")
-                    tag = summoner_profile.get("标签", "")
-                    level = summoner_profile.get("等级", 0)
-                    tier = summoner_profile.get("段位", 0)
-                    lp = summoner_profile.get("胜点", 0)
-                    season_wins = summoner_profile.get("赛季胜场", 0)
-                    season_total = summoner_profile.get("赛季总场次", 0)
-                    display = f"{name}#{tag}" if tag else name
-                    tier_name = get_wegame_tier_name(tier) if tier else "无段位"
-                    if lp and tier:
-                        tier_name = f"{tier_name} {lp}LP"
-                    wr = (season_wins / max(season_total, 1) * 100) if season_total else 0
+                    summoner_profile = None
+                    summoner_career = None
+                    champions_data = None
+                    battle_report_data = None
+                    openid = ""
 
-                    self._msg_queue.put(("status", "summoner",
-                        f"✅ 召唤师: {display}  |  Lv.{level}  |  {tier_name}  |  "
-                        f"赛季: {season_wins}W/{season_total - season_wins}L ({wr:.1f}%)",
-                        THEME["green"]))
-                    self._msg_queue.put(("progress", 12, ""))
+                    try:
+                        si = client.get_summoner_info(area=area)
+                        summoner_profile = parse_summoner_info(si)
+                        name = summoner_profile.get("召唤师名称", "Unknown")
+                        tag = summoner_profile.get("标签", "")
+                        level = summoner_profile.get("等级", 0)
+                        tier = summoner_profile.get("段位", 0)
+                        lp = summoner_profile.get("胜点", 0)
+                        season_wins = summoner_profile.get("赛季胜场", 0)
+                        season_total = summoner_profile.get("赛季总场次", 0)
+                        display = f"{name}#{tag}" if tag else name
+                        tier_name = get_wegame_tier_name(tier) if tier else "无段位"
+                        if lp and tier:
+                            tier_name = f"{tier_name} {lp}LP"
+                        wr = (season_wins / max(season_total, 1) * 100) if season_total else 0
 
-                    openid = summoner_profile.get("openid", "")
-                    if openid and not client.openid:
-                        client.set_openid(openid)
-
-                    # 获取生涯统计
-                    if openid:
-                        sc = client.get_player_recent_stat(openid, area=area)
-                        summoner_career = parse_player_recent_stat(sc)
-                        total_k = summoner_career.get("生涯总击杀", 0)
-                        total_v = summoner_career.get("生涯MVP", 0)
-                        total_p = summoner_career.get("生涯五杀", 0)
-                        max_ws = summoner_career.get("最长连胜", 0)
                         self._msg_queue.put(("status", "summoner",
-                            f"✅ 生涯: {total_k}击杀 | MVP×{total_v} | 五杀×{total_p} | 最长连胜{max_ws}",
+                            f"✅ 召唤师: {display}  |  Lv.{level}  |  {tier_name}  |  "
+                            f"赛季: {season_wins}W/{season_total - season_wins}L ({wr:.1f}%)",
                             THEME["green"]))
+                        self._msg_queue.put(("progress", 12, ""))
 
-                        # 获取英雄熟练度
-                        self._msg_queue.put(("progress", 15, ""))
-                        cr = client.get_champions(openid, area=area)
-                        champions_data = parse_champions(cr)
-                        self._msg_queue.put(("log", f"英雄熟练度: {len(champions_data)} 个英雄\n"))
+                        # ── 全部模式：等级过滤 ─────────────────────────────
+                        if (getattr(self, "_is_all_areas_mode", None)
+                                and self._is_all_areas_mode.get()
+                                and level < 20):
+                            self._msg_queue.put(("log",
+                                f"  [跳过] 等级 {level} < 20，跳过该大区\n"))
+                            continue
 
-                    # 获取赛季报告
-                    self._msg_queue.put(("progress", 18, ""))
-                    br = client.get_battle_report(area=area)
-                    battle_report_data = parse_battle_report(br)
-                    bc = battle_report_data.get("battle_count", {})
-                    self._msg_queue.put(("log",
-                        f"战斗报告: 全模式 {bc.get('全部总场', 0)} 场\n"))
+                        openid = summoner_profile.get("openid", "")
+                        if openid:
+                            client.set_openid(openid)
 
-                except WegameApiError as e:
-                    self._msg_queue.put(("log", f"⚠ 召唤师/生涯信息获取失败: {e}\n"))
-                except Exception as e:
-                    self._msg_queue.put(("log", f"⚠ 意外错误: {e}\n"))
+                        # 获取生涯统计
+                        if openid:
+                            sc = client.get_player_recent_stat(openid, area=area)
+                            summoner_career = parse_player_recent_stat(sc)
+                            total_k = summoner_career.get("生涯总击杀", 0)
+                            total_v = summoner_career.get("生涯MVP", 0)
+                            total_p = summoner_career.get("生涯五杀", 0)
+                            max_ws = summoner_career.get("最长连胜", 0)
+                            self._msg_queue.put(("status", "summoner",
+                                f"✅ 生涯: {total_k}击杀 | MVP×{total_v} | 五杀×{total_p} | 最长连胜{max_ws}",
+                                THEME["green"]))
 
-                # ── 阶段 3: 对局列表 ─────────────────────────────────────────
-                self._msg_queue.put(("status", "list", "⏳ 正在获取对局列表..."))
-                self._msg_queue.put(("progress", 20, "获取对局列表中..."))
+                            # 获取英雄熟练度
+                            self._msg_queue.put(("progress", 15, ""))
+                            cr = client.get_champions(openid, area=area)
+                            champions_data = parse_champions(cr)
+                            self._msg_queue.put(("log", f"英雄熟练度: {len(champions_data)} 个英雄\n"))
 
-                max_games = 501
+                        # 获取赛季报告
+                        self._msg_queue.put(("progress", 18, ""))
+                        br = client.get_battle_report(area=area)
+                        battle_report_data = parse_battle_report(br)
+                        bc = battle_report_data.get("battle_count", {})
+                        self._msg_queue.put(("log",
+                            f"战斗报告: 全模式 {bc.get('全部总场', 0)} 场\n"))
 
-                # 查询已有对局 ID 以跳过重复获取（与 CLI 保持一致）
-                existing_ids = set()
-                db_path_for_check = str(BASE_DIR / "wegame_matches.db")
-                if Path(db_path_for_check).exists():
+                    except WegameApiError as e:
+                        self._msg_queue.put(("log", f"⚠ 召唤师/生涯信息获取失败: {e}\n"))
+                    except Exception as e:
+                        self._msg_queue.put(("log", f"⚠ 意外错误: {e}\n"))
+
+                    # ── 阶段 3: 对局列表 ─────────────────────────────────────────
+                    self._msg_queue.put(("status", "list", "⏳ 正在获取对局列表..."))
+                    self._msg_queue.put(("progress", 20, "获取对局列表中..."))
+
+                    max_games = 501
+
+                    # 查询已有对局 ID 以跳过重复获取（与 CLI 保持一致）
+                    existing_ids = set()
+                    db_path_for_check = str(BASE_DIR / "wegame_matches.db")
                     try:
                         import sqlite3 as _sqlite3
                         conn = _sqlite3.connect(db_path_for_check)
@@ -1452,131 +1700,148 @@ class LOLHistoryApp:
                     except Exception:
                         pass
 
-                try:
-                    all_battles = fetch_battle_list(
-                        client, area=area, max_games=max_games,
-                        skip_tft=skip_tft, delay_ms=delay,
-                        existing_ids=existing_ids if existing_ids else None,
-                    )
-                except Exception as e:
-                    self._msg_queue.put(
-                        ("error", f"获取对局列表失败: {e}\n{traceback.format_exc()}"))
-                    return
-
-                total = len(all_battles)
-                self._total_games = total
-                wins = sum(1 for b in all_battles if b.get("win") == "Win")
-                self._total_wins = wins
-                wr_all = (wins / total * 100) if total > 0 else 0
-                self._msg_queue.put(("status", "list",
-                    f"✅ 获取完成: {total} 场  |  {wins}W/{total - wins}L  |  {wr_all:.1f}%",
-                    THEME["green"]))
-                self._msg_queue.put(("progress", 40, f"已获取 {total} 场对局"))
-
-                if self._cancel_flag.is_set():
-                    return
-                if total == 0:
-                    self._msg_queue.put(("error", "未找到对局记录"))
-                    return
-
-                # ── 阶段 4: 对局详情 ─────────────────────────────────────────
-                self._msg_queue.put(("status", "detail", "⏳ 正在获取对局详情..."))
-                detail_data = {}
-                game_ids = [str(b.get("game_id", "")) for b in all_battles
-                           if b.get("game_id")]
-                game_ids_set = set(game_ids)
-
-                # 查询已有详情 + 回填缺失详情（与 CLI 保持一致）
-                existing_detail_ids: set[str] = set()
-                backfill_ids: set[str] = set()
-                db_detail_path = str(BASE_DIR / "wegame_matches.db")
-                if Path(db_detail_path).exists():
                     try:
-                        import sqlite3 as _sqlite3
-                        conn = _sqlite3.connect(db_detail_path)
-                        rows = conn.execute(
-                            "SELECT DISTINCT game_id FROM match_detail WHERE area = ?",
-                            (area,)
-                        ).fetchall()
-                        existing_detail_ids = {r[0] for r in rows}
-                        # 回填：match_summary 有但 match_detail 缺失的对局
-                        rows2 = conn.execute("""
-                            SELECT DISTINCT ms.game_id FROM match_summary ms
-                            WHERE ms.area = ?
-                            AND ms.game_id NOT IN (
-                                SELECT DISTINCT game_id FROM match_detail WHERE area = ?
-                            )
-                        """, (area, area)).fetchall()
-                        backfill_ids = {r[0] for r in rows2}
-                        conn.close()
-                    except Exception:
-                        pass
-
-                # 合并：当前获取的对局在前，历史缺失详情的对局在后
-                new_backfill = backfill_ids - game_ids_set - existing_detail_ids
-                if new_backfill:
-                    self._msg_queue.put(
-                        ("log", f"发现 {len(new_backfill)} 场历史对局缺少详情，将一并补获取\n"))
-                all_detail_ids = game_ids + sorted(new_backfill)
-
-                new_game_ids = [gid for gid in all_detail_ids
-                                if gid not in existing_detail_ids]
-                skipped = len(all_detail_ids) - len(new_game_ids)
-                if skipped:
-                    self._msg_queue.put(
-                        ("log", f"详情: {skipped} 场已有，跳过；需获取 {len(new_game_ids)} 场\n"))
-
-                self._msg_queue.put(("progress", 45,
-                    f"正在获取详情: 0/{len(new_game_ids)}"))
-
-                if new_game_ids:
-                    try:
-                        detail_data = fetch_battle_details(
-                            client, new_game_ids, area=area, delay_ms=delay)
+                        all_battles = fetch_battle_list(
+                            client, area=area, max_games=max_games,
+                            skip_tft=skip_tft, delay_ms=delay,
+                            existing_ids=existing_ids if existing_ids else None,
+                        )
                     except Exception as e:
                         self._msg_queue.put(
-                            ("error", f"获取对局详情失败: {e}\n{traceback.format_exc()}"))
+                            ("error", f"获取对局列表失败: {e}\n{traceback.format_exc()}"))
                         return
 
-                    detail_ok = sum(1 for v in detail_data.values()
-                                   if "error" not in v)
-                    self._msg_queue.put(("status", "detail",
-                        f"✅ 详情: {detail_ok}/{len(new_game_ids)} 场",
-                        THEME["green"] if detail_ok == len(new_game_ids) else THEME["orange"]))
-                    self._msg_queue.put(("progress", 75,
-                        f"详情: {detail_ok}/{len(new_game_ids)} 场"))
-                else:
-                    self._msg_queue.put(("status", "detail",
-                        "✅ 详情: 全部已有，无需获取", THEME["green"]))
-                    self._msg_queue.put(("progress", 75, "详情: 全部已有"))
+                    total = len(all_battles)
+                    self._total_games = total
+                    wins = sum(1 for b in all_battles if b.get("win") == "Win")
+                    self._total_wins = wins
+                    wr_all = (wins / total * 100) if total > 0 else 0
+                    self._msg_queue.put(("status", "list",
+                        f"✅ 获取完成: {total} 场  |  {wins}W/{total - wins}L  |  {wr_all:.1f}%",
+                        THEME["green"]))
+                    self._msg_queue.put(("progress", 40, f"已获取 {total} 场对局"))
 
-                # ── 阶段 5: 导出 ────────────────────────────────────────────
-                self._msg_queue.put(("status", "export", "⏳ 正在导出数据..."))
-                self._msg_queue.put(("progress", 80, "导出中..."))
+                    if self._cancel_flag.is_set():
+                        return
+                    db_path = str(BASE_DIR / "wegame_matches.db")
+                    if total == 0:
+                        self._msg_queue.put(("log", f"⚠ {area_name} 无近期对局记录\n"))
+                        # 无对局数据时仍需保存辅助表（每个大区独立的召唤师资料/熟练度/赛季报告）
+                        try:
+                            export_sqlite([], None, db_path,
+                                        self_openid=client.openid or "",
+                                        summoner_info=summoner_profile,
+                                        summoner_career=summoner_career,
+                                        puin=client.puin,
+                                        champions=champions_data,
+                                        battle_report=battle_report_data,
+                                        area=area)
+                            self._msg_queue.put(("log", f"✅ 辅助表已保存（{area_name} 无对局）\n"))
+                        except Exception as e:
+                            self._msg_queue.put(("log", f"⚠ 保存辅助表失败: {e}\n"))
+                        self._msg_queue.put(("progress", 85, "跳过（无对局）"))
+                        continue
 
-                parsed = [parse_battle_summary(b, area=area) for b in all_battles]
-                db_path = str(BASE_DIR / "wegame_matches.db")
-                self._db_path = db_path
+                    # ── 阶段 4: 对局详情 ─────────────────────────────────────────
+                    self._msg_queue.put(("status", "detail", "⏳ 正在获取对局详情..."))
+                    detail_data = {}
+                    game_ids = [str(b.get("game_id", "")) for b in all_battles
+                               if b.get("game_id")]
+                    game_ids_set = set(game_ids)
 
-                try:
-                    export_sqlite(parsed, detail_data or None, db_path,
-                                self_openid=client.openid or "",
-                                summoner_info=summoner_profile,
-                                summoner_career=summoner_career,
-                                puin=client.puin,
-                                champions=champions_data,
-                                battle_report=battle_report_data,
-                                area=area)
-                except Exception as e:
-                    self._msg_queue.put(
-                        ("error", f"导出数据失败: {e}\n{traceback.format_exc()}"))
-                    return
+                    # 查询已有详情 + 回填缺失详情（与 CLI 保持一致）
+                    existing_detail_ids: set[str] = set()
+                    backfill_ids: set[str] = set()
+                    db_detail_path = str(BASE_DIR / "wegame_matches.db")
+                    if Path(db_detail_path).exists():
+                        try:
+                            import sqlite3 as _sqlite3
+                            conn = _sqlite3.connect(db_detail_path)
+                            rows = conn.execute(
+                                "SELECT DISTINCT game_id FROM match_detail WHERE area = ?",
+                                (area,)
+                            ).fetchall()
+                            existing_detail_ids = {r[0] for r in rows}
+                            # 回填：match_summary 有但 match_detail 缺失的对局
+                            rows2 = conn.execute("""
+                                SELECT DISTINCT ms.game_id FROM match_summary ms
+                                WHERE ms.area = ?
+                                AND ms.game_id NOT IN (
+                                    SELECT DISTINCT game_id FROM match_detail WHERE area = ?
+                                )
+                            """, (area, area)).fetchall()
+                            backfill_ids = {r[0] for r in rows2}
+                            conn.close()
+                        except Exception:
+                            pass
 
-                self._msg_queue.put(("status", "export",
-                    f"✅ 已导出到 {db_path}", THEME["green"]))
-                self._msg_queue.put(("progress", 88, "数据已导出"))
+                    # 合并：当前获取的对局在前，历史缺失详情的对局在后
+                    new_backfill = backfill_ids - game_ids_set - existing_detail_ids
+                    if new_backfill:
+                        self._msg_queue.put(
+                            ("log", f"发现 {len(new_backfill)} 场历史对局缺少详情，将一并补获取\n"))
+                    all_detail_ids = game_ids + sorted(new_backfill)
 
-                # ── 阶段 6: 分析报告 ────────────────────────────────────────
+                    new_game_ids = [gid for gid in all_detail_ids
+                                    if gid not in existing_detail_ids]
+                    skipped = len(all_detail_ids) - len(new_game_ids)
+                    if skipped:
+                        self._msg_queue.put(
+                            ("log", f"详情: {skipped} 场已有，跳过；需获取 {len(new_game_ids)} 场\n"))
+
+                    self._msg_queue.put(("progress", 45,
+                        f"正在获取详情: 0/{len(new_game_ids)}"))
+
+                    if new_game_ids:
+                        try:
+                            detail_data = fetch_battle_details(
+                                client, new_game_ids, area=area, delay_ms=delay)
+                        except Exception as e:
+                            self._msg_queue.put(
+                                ("error", f"获取对局详情失败: {e}\n{traceback.format_exc()}"))
+                            return
+
+                        detail_ok = sum(1 for v in detail_data.values()
+                                       if "error" not in v)
+                        self._msg_queue.put(("status", "detail",
+                            f"✅ 详情: {detail_ok}/{len(new_game_ids)} 场",
+                            THEME["green"] if detail_ok == len(new_game_ids) else THEME["orange"]))
+                        self._msg_queue.put(("progress", 75,
+                            f"详情: {detail_ok}/{len(new_game_ids)} 场"))
+                    else:
+                        self._msg_queue.put(("status", "detail",
+                            "✅ 详情: 全部已有，无需获取", THEME["green"]))
+                        self._msg_queue.put(("progress", 75, "详情: 全部已有"))
+
+                    # ── 阶段 5: 导出 ────────────────────────────────────────────
+                    self._msg_queue.put(("status", "export", "⏳ 正在导出数据..."))
+                    self._msg_queue.put(("progress", 80, "导出中..."))
+
+                    parsed = [parse_battle_summary(b, area=area) for b in all_battles]
+                    db_path = str(BASE_DIR / "wegame_matches.db")
+                    self._db_path = db_path
+
+                    try:
+                        export_sqlite(parsed, detail_data or None, db_path,
+                                    self_openid=client.openid or "",
+                                    summoner_info=summoner_profile,
+                                    summoner_career=summoner_career,
+                                    puin=client.puin,
+                                    champions=champions_data,
+                                    battle_report=battle_report_data,
+                                    area=area)
+                    except Exception as e:
+                        self._msg_queue.put(
+                            ("error", f"导出数据失败: {e}\n{traceback.format_exc()}"))
+                        return
+
+                    self._msg_queue.put(("status", "export",
+                        f"✅ 已导出到 {db_path}", THEME["green"]))
+                    self._msg_queue.put(("progress", 88, "数据已导出"))
+
+                total_all_areas += 1
+
+                # ── 循环结束：分析报告（统一执行一次） ─────────────────────────
                 self._msg_queue.put(("status", "report", "⏳ 正在生成分析报告..."))
                 self._msg_queue.put(("progress", 90, "生成报告中..."))
 
@@ -1584,6 +1849,7 @@ class LOLHistoryApp:
                     report_path = generate_report(
                         db_path=db_path,
                         output_path="report.html",
+                        area_ids=areas,
                     )
                 except Exception as e:
                     self._msg_queue.put(
@@ -1613,7 +1879,7 @@ class LOLHistoryApp:
         self._report_path = report_path
         self._fetch_title.configure(text="拉取完成！")
         self._fetch_sub.configure(text=f"共获取 {total} 场对局记录")
-        self._show_page(3)
+        self._show_page(4)
 
     def _handle_error(self, msg: str):
         """处理全局错误。"""
@@ -1769,7 +2035,7 @@ class LOLHistoryApp:
                     self._append_log(msg[1])
                     # 解析进度信息，实时更新进度条
                     text = msg[1]
-                    m = re.search(r'已获取:\s*(\d+)\s*场对局', text)
+                    m = re.search(r'已获取[：:]\s*(\d+)\s*场对局', text)
                     if m:
                         count = int(m.group(1))
                         pct = min(20 + (count / max(self._total_games or 1, 1)) * 20, 40)

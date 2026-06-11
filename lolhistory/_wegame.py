@@ -158,7 +158,7 @@ class WegameApiClient:
         resp_openid = data.get("openid", "")
         if resp_openid and not self._openid:
             self._openid = resp_openid
-            logger.info("已探测到 openid: %s...", resp_openid[:20])
+            logger.debug("已探测到 openid: %s...", resp_openid[:20])
         return data
 
     def _discover_openid(self, game_id: str, area: int) -> str:
@@ -172,7 +172,7 @@ class WegameApiClient:
             oid = data.get("openid", "")
             if oid:
                 self._openid = oid
-                logger.info("通过 account_type=1 探测到 openid: %s...", oid[:20])
+                logger.debug("通过 account_type=1 探测到 openid: %s...", oid[:20])
                 return oid
         except WegameApiError:
             pass
@@ -593,7 +593,7 @@ def fetch_battle_list(client: WegameApiClient, area: int = 1,
         if not battles:
             empty_streak += 1
             if empty_streak >= 2:
-                logger.info("offset %d 处无更多对局", offset)
+                logger.debug("offset %d 处无更多对局", offset)
                 break
             offset += COUNT
             continue
@@ -613,25 +613,24 @@ def fetch_battle_list(client: WegameApiClient, area: int = 1,
                 all_battles.append(b)
                 new_count += 1
 
-        sys.stderr.write(f"\r  已获取: {len(all_battles)} 场对局...")
-        sys.stderr.flush()
+        # 首次有数据时输出，之后每 50 场汇报一次进度
+        if len(all_battles) >= 10 and (len(all_battles) == new_count or len(all_battles) % 50 == 0):
+            print(f"  已获取: {len(all_battles)} 场对局", flush=True)
 
         if has_known:
-            logger.info("遇到已入库对局，停止获取（offset=%d，已获取 %d 场）",
-                        offset, len(all_battles))
+            print(f"  已获取: {len(all_battles)} 场对局（已是最新）", flush=True)
             break
 
         if len(all_battles) >= max_games:
             break
         if new_count < COUNT / 2:
-            logger.info("稀疏页面 — 可能已到达数据末尾")
+            logger.debug("稀疏页面 — 可能已到达数据末尾（new_count=%d, COUNT/2=%d）", new_count, COUNT / 2)
             break
 
         offset += COUNT
         if delay_ms:
             time.sleep(delay_ms / 1000.0)
 
-    sys.stderr.write("\n")
     return all_battles
 
 
@@ -660,7 +659,7 @@ def fetch_battle_details(client: WegameApiClient, game_ids: list[str],
                 details[str(gid)] = parse_battle_detail(data, client.openid or "")
                 if attempt > 0:
                     retry_stats["recovered"] += 1
-                    logger.info("重试成功 %s (第%d次重试)", gid, attempt)
+                    logger.debug("重试成功 %s (第%d次重试)", gid, attempt)
                 last_error = None
                 break
             except WegameApiError as e:
@@ -684,15 +683,14 @@ def fetch_battle_details(client: WegameApiClient, game_ids: list[str],
                            gid, max_retries, last_error)
             details[str(gid)] = {"error": str(last_error), "game_id": str(gid)}
 
-        sys.stderr.write(f"\r  获取详情: {i}/{total}...")
-        sys.stderr.flush()
+        if i % 10 == 0 or i == total:
+            print(f"    获取详情: {i}/{total}", flush=True)
         if delay_ms:
             time.sleep(delay_ms / 1000.0)
 
-    sys.stderr.write("\n")
     if retry_stats["total"]:
-        logger.info("详情获取统计: 失败%d局, 重试恢复%d局",
-                    retry_stats["total"], retry_stats["recovered"])
+        logger.debug("详情获取统计: 失败%d局, 重试恢复%d局",
+                     retry_stats["total"], retry_stats["recovered"])
     return details
 
 

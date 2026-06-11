@@ -127,8 +127,8 @@ def _win_rate(wins: int, total: int) -> float:
 
 # ── 数据加载 ─────────────────────────────────────────────────────────────────
 
-def _load_matches(db_path: str) -> list[dict]:
-    """从 SQLite 加载 match_summary 全部行，按时间升序。"""
+def _load_matches(db_path: str, area_ids: list[int] | None = None) -> list[dict]:
+    """从 SQLite 加载 match_summary 行，按时间升序，可指定大区过滤。"""
     if not Path(db_path).exists():
         return []
 
@@ -143,7 +143,15 @@ def _load_matches(db_path: str) -> list[dict]:
     except sqlite3.OperationalError:
         return []
 
-    cur.execute("SELECT * FROM match_summary ORDER BY game_start_time ASC")
+    if area_ids:
+        placeholders = ", ".join("?" * len(area_ids))
+        cur.execute(
+            f"SELECT * FROM match_summary WHERE area IN ({placeholders}) "
+            "ORDER BY game_start_time ASC",
+            area_ids,
+        )
+    else:
+        cur.execute("SELECT * FROM match_summary ORDER BY game_start_time ASC")
     rows = cur.fetchall()
     conn.close()
 
@@ -160,7 +168,7 @@ def _load_matches(db_path: str) -> list[dict]:
     return matches
 
 
-def _load_champion_mastery(db_path: str) -> list[dict]:
+def _load_champion_mastery(db_path: str, area_ids: list[int] | None = None) -> list[dict]:
     """从 SQLite 加载 champion_mastery 表数据，按总场次降序。"""
     if not Path(db_path).exists():
         return []
@@ -176,14 +184,22 @@ def _load_champion_mastery(db_path: str) -> list[dict]:
     except sqlite3.OperationalError:
         return []
 
-    cur.execute("SELECT * FROM champion_mastery WHERE total_games > 0 ORDER BY total_games DESC")
+    if area_ids:
+        placeholders = ", ".join("?" * len(area_ids))
+        cur.execute(
+            f"SELECT * FROM champion_mastery WHERE area IN ({placeholders}) "
+            "AND total_games > 0 ORDER BY total_games DESC",
+            area_ids,
+        )
+    else:
+        cur.execute("SELECT * FROM champion_mastery WHERE total_games > 0 ORDER BY total_games DESC")
     rows = cur.fetchall()
     conn.close()
 
     return [dict(row) for row in rows]
 
 
-def _load_season_history(db_path: str) -> list[dict]:
+def _load_season_history(db_path: str, area_ids: list[int] | None = None) -> list[dict]:
     """从 SQLite 加载 season_history 表数据，按赛季ID升序。"""
     if not Path(db_path).exists():
         return []
@@ -199,14 +215,22 @@ def _load_season_history(db_path: str) -> list[dict]:
     except sqlite3.OperationalError:
         return []
 
-    cur.execute("SELECT * FROM season_history ORDER BY sid ASC")
+    if area_ids:
+        placeholders = ", ".join("?" * len(area_ids))
+        cur.execute(
+            f"SELECT * FROM season_history WHERE area IN ({placeholders}) "
+            "ORDER BY sid ASC",
+            area_ids,
+        )
+    else:
+        cur.execute("SELECT * FROM season_history ORDER BY sid ASC")
     rows = cur.fetchall()
     conn.close()
 
     return [dict(row) for row in rows]
 
 
-def _load_summoner_profile(db_path: str) -> dict | None:
+def _load_summoner_profile(db_path: str, area_ids: list[int] | None = None) -> dict | None:
     """从 SQLite 加载 summoner_profile 表数据（单行）。"""
     if not Path(db_path).exists():
         return None
@@ -221,13 +245,20 @@ def _load_summoner_profile(db_path: str) -> dict | None:
     except sqlite3.OperationalError:
         conn.close()
         return None
-    cur.execute("SELECT * FROM summoner_profile LIMIT 1")
+    if area_ids:
+        placeholders = ", ".join("?" * len(area_ids))
+        cur.execute(
+            f"SELECT * FROM summoner_profile WHERE area IN ({placeholders}) LIMIT 1",
+            area_ids,
+        )
+    else:
+        cur.execute("SELECT * FROM summoner_profile LIMIT 1")
     row = cur.fetchone()
     conn.close()
     return dict(row) if row else None
 
 
-def _load_career_overview(db_path: str) -> dict | None:
+def _load_career_overview(db_path: str, area_ids: list[int] | None = None) -> dict | None:
     """从 SQLite 加载 career_overview 表数据（单行）。"""
     if not Path(db_path).exists():
         return None
@@ -242,7 +273,14 @@ def _load_career_overview(db_path: str) -> dict | None:
     except sqlite3.OperationalError:
         conn.close()
         return None
-    cur.execute("SELECT * FROM career_overview LIMIT 1")
+    if area_ids:
+        placeholders = ", ".join("?" * len(area_ids))
+        cur.execute(
+            f"SELECT * FROM career_overview WHERE area IN ({placeholders}) LIMIT 1",
+            area_ids,
+        )
+    else:
+        cur.execute("SELECT * FROM career_overview LIMIT 1")
     row = cur.fetchone()
     conn.close()
     return dict(row) if row else None
@@ -622,7 +660,7 @@ def _analyze_win_rate_by_duration(matches: list[dict]) -> dict:
     """按对局时长分桶分析胜率。"""
     durations = [m["game_time_played"] / 60 for m in matches]
     if not durations:
-        return {"labels": [], "win_rates": [], "scatter": [], "summary": "暂无数据。"}
+        return {"labels": [], "win_rates": [], "games": [], "scatter": [], "summary": "暂无数据。"}
 
     q1 = statistics.median(sorted(durations)[:len(durations)//2]) if len(durations) >= 4 else min(durations)
     q3 = statistics.median(sorted(durations)[len(durations)//2:]) if len(durations) >= 4 else max(durations)
@@ -2695,7 +2733,7 @@ main,footer{position:relative;z-index:1}
 @media(max-width:640px){.skin-switch-btn{padding:4px 10px;font-size:11px}}
 """
 
-def _build_nav() -> str:
+def _build_nav(extra_html: str = "") -> str:
     items = [
         ("#overview", "\U0001f4ca 总览"),
         ("#winrate", "\U0001f52e 胜率因子"),
@@ -2705,12 +2743,23 @@ def _build_nav() -> str:
         ("#attendance", "\U0001f4c5 出勤日历"),
     ]
     links = "".join(f'<a href="{href}">{label}</a>' for href, label in items)
-    return f'<nav><span class="logo">⚔️ LOLhistory</span>{links}</nav>'
+    return f'<nav><span class="logo">⚔️ LOLhistory</span>{extra_html}{links}</nav>'
 
 def _build_hero(results: dict) -> str:
     ov = results.get("overview", {})
     sa = results.get("summoner_profile_analysis", {})
     rating = ov.get("overall_rating", "")
+
+    # 招牌英雄：优先从 overview（需对局列表数据）取，后备英雄池分布的 top 1
+    champ_id = ov.get("most_played_champ", 0)
+    champ_name = ov.get("most_played_champ_name", "")
+    if not champ_id:
+        pool = results.get("champion_pool", {})
+        pool_freq = pool.get("freq", [])
+        if pool_freq:
+            top = pool_freq[0]
+            champ_id = top.get("champion_id", 0) or 0
+            champ_name = top.get("name", "")
 
     # ── 玩家名片横幅 ──
     banner_html = ""
@@ -2726,10 +2775,8 @@ def _build_hero(results: dict) -> str:
             if lp > 0:
                 tier_label += f" · {lp}胜点"
             tier_badge = f'<span class="pb-tier">{tier_label}</span>'
-        # 组装横幅 — 招牌英雄图标
-        champ_id = ov.get("most_played_champ", 0)
+        # 组装横幅 — 招牌英雄图标（后备值已由函数顶部计算）
         champ_icon_url = f"https://wegame.gtimg.com/g.26-r.c2d3c/helper/lol/assis/images/resources/champions/{champ_id}.png" if champ_id else ""
-        champ_name = ov.get("most_played_champ_name", "")
         icon_html = f'<img src="{champ_icon_url}" alt="{champ_name}" title="{champ_name}" onerror="this.parentElement.innerHTML=\'⚔️\'">' if champ_icon_url else "⚔️"
         banner_html = f'''<div class="player-banner">
   <div class="pb-icon">{icon_html}</div>
@@ -2766,7 +2813,7 @@ def _build_hero(results: dict) -> str:
         ("出勤率", f"{ov.get('attendance', 0)}%", ""),
         ("出勤天数", ov.get("days_active", 0), ""),
         ("英雄池", f"{ov.get('hero_pool', 0)}", ""),
-        ("招牌英雄", ov.get("most_played_champ_name", ""), ""),
+        ("招牌英雄", champ_name, ""),
         ("最高段位", ov.get("highest_tier", "无"), ""),
         ("当前段位", ov.get("current_tier", "无"), ""),
     ]
@@ -3697,6 +3744,13 @@ def _build_html(results: dict) -> str:
     ov = results.get("overview", {})
     champion_id = ov.get("most_played_champ", 0)
     hero_name = ov.get("most_played_champ_name", "")
+    if not champion_id:
+        pool = results.get("champion_pool", {})
+        pool_freq = pool.get("freq", [])
+        if pool_freq:
+            top = pool_freq[0]
+            champion_id = top.get("champion_id", 0) or 0
+            hero_name = top.get("name", "")
     export_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     css = _build_css()
     nav = _build_nav()
@@ -3803,6 +3857,215 @@ def _build_html(results: dict) -> str:
 </body>
 </html>"""
 
+def _build_html_multi(area_data: dict[int, dict]) -> str:
+    """生成多区报告 HTML：使用 per-area chart init 函数 + JS 切换器。"""
+    from ._data import get_game_area_name
+
+    area_ids = list(area_data.keys())
+    first_id = area_ids[0]
+    first = area_data[first_id]
+
+    export_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    css = _build_css() + """
+nav .area-switch-nav { display:inline-flex; align-items:center; gap:4px; margin-right:16px; }
+nav .area-switch-nav label { color:#8b95a5; font-size:12px; cursor:default; }
+nav .area-switch-nav select {
+  background:rgba(26,34,48,0.8); color:#c8aa6e; border:1px solid #2a3a4a;
+  border-radius:4px; padding:3px 6px; font-size:13px; cursor:pointer;
+  font-family:inherit;
+}
+nav .area-switch-nav select:hover { border-color:#c8aa6e; }
+nav .area-switch-nav select:focus { outline:none; border-color:#c8aa6e; }
+"""
+
+    ov = first["results"].get("overview", {})
+    champion_id = ov.get("most_played_champ", 0)
+    hero_name = ov.get("most_played_champ_name", "")
+    if not champion_id:
+        pool = first["results"].get("champion_pool", {})
+        pool_freq = pool.get("freq", [])
+        if pool_freq:
+            top = pool_freq[0]
+            champion_id = top.get("champion_id", 0) or 0
+            hero_name = top.get("name", "")
+    # 构建大区切换器（嵌入导航栏）
+    area_switcher_html = '<span class="area-switch-nav"><label>🎯</label><select id="areaSwitcher" onchange="switchArea(this.value)">' + \
+        "".join(f'<option value="{aid}">{area_data[aid]["name"]}</option>' for aid in area_ids) + \
+        '</select></span>'
+    nav = _build_nav(area_switcher_html)
+    footer = _build_footer(0, export_time)
+    initial_skin_url = f"https://wegame.gtimg.com/g.26-r.c2d3c/helper/lol/assis/images/resources/skins/original/{champion_id}-001.jpg" if champion_id else ""
+
+    # 为每个大区生成独立的图表初始化代码 + HTML 内容块
+    area_chart_blocks: dict[int, str] = {}
+    area_html_blocks: dict[int, str] = {}
+    for aid in area_ids:
+        results = area_data[aid]["results"]
+        area_chart_blocks[aid] = _build_all_charts(results)
+        area_html_blocks[aid] = "".join([
+            _build_hero(results),
+            _build_section_winrate(results),
+            _build_section_game_rhythm(results),
+            _build_section_psychology(results),
+            _build_section_player_level(results),
+            _build_section_attendance(results),
+        ])
+
+    import json
+    area_html_json = json.dumps(area_html_blocks, ensure_ascii=True)
+
+    # 为每个大区计算招牌英雄 ID 和名称（用于背景皮肤切换）
+    area_skin_cid: dict[int, int] = {}
+    area_hero_name: dict[int, str] = {}
+    for aid, ad in area_data.items():
+        a_ov = ad["results"].get("overview", {})
+        cid = a_ov.get("most_played_champ", 0)
+        hname = a_ov.get("most_played_champ_name", "")
+        if not cid:
+            a_pool = ad["results"].get("champion_pool", {})
+            a_freq = a_pool.get("freq", [])
+            if a_freq:
+                cid = a_freq[0].get("champion_id", 0) or 0
+                hname = a_freq[0].get("name", "")
+        area_skin_cid[aid] = cid
+        area_hero_name[aid] = hname
+    area_skin_cid_json = json.dumps(area_skin_cid, separators=(',', ':'))
+    area_hero_name_json = json.dumps(area_hero_name, ensure_ascii=True)
+
+    return f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LOL 对局历史数据分析报告（多区）</title>
+<style>{css}</style>
+</head>
+<body style="--bg-image: url('{initial_skin_url}');">
+{nav}
+<main>
+<div id="area-panel-content">
+{area_html_blocks[first_id]}
+</div>
+</main>
+{footer}
+<script>
+/* per-area HTML content blocks */
+var _AREA_HTML = {area_html_json};
+
+/* per-area champion data for skin background */
+var _AREA_SKIN_CID = {area_skin_cid_json};
+var _AREA_HERO_NAME = {area_hero_name_json};
+
+/* per-area chart init functions */
+function _initChartsArea_{first_id}() {{
+  Chart.defaults.font.size = 12;
+  Chart.defaults.font.family = '"Microsoft YaHei","PingFang SC",sans-serif';
+  {area_chart_blocks[first_id]}
+}}
+{''.join(
+    f'function _initChartsArea_{aid}() {{\n  Chart.defaults.font.size = 12;\n  Chart.defaults.font.family = \'"Microsoft YaHei","PingFang SC",sans-serif\';\n  {area_chart_blocks[aid]}\n}}'
+    for aid in area_ids if aid != first_id
+)}
+
+var AREA_CHARTS = {{}};
+var _chartId = 0;
+var _curArea = {first_id};
+
+function _saveChart(chart) {{ var id = _chartId++; AREA_CHARTS[id] = chart; return chart; }}
+
+function _destroyAllCharts() {{
+  Object.values(AREA_CHARTS).forEach(function(c) {{ try {{ c.destroy(); }} catch(e) {{ }} }});
+  AREA_CHARTS = {{}}; _chartId = 0;
+}}
+
+function switchArea(aid) {{
+  _curArea = parseInt(aid);
+  _destroyAllCharts();
+  document.getElementById('areaSwitcher').value = aid;
+  document.getElementById('area-panel-content').innerHTML = _AREA_HTML[aid] || '';
+  window['_initChartsArea_' + aid]();
+  _initSkinForArea(aid);
+}}
+
+var CDNS = [
+  'https://cdn.bootcdn.net/ajax/libs/Chart.js/4.4.1/chart.umd.min.js',
+  'https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js',
+  'https://unpkg.com/chart.js@4.4.7/dist/chart.umd.min.js',
+];
+function tryCDN(i) {{
+  if (i >= CDNS.length) {{
+    document.querySelectorAll('.chart-card .chart-wrap').forEach(function(el) {{
+      el.innerHTML = '<p style=color:#e74c3c;text-align:center;padding:20px>⚠ Chart.js 加载失败</p>';
+    }});
+    return;
+  }}
+  var s = document.createElement('script');
+  s.src = CDNS[i];
+  s.onerror = function() {{ s.remove(); tryCDN(i + 1); }};
+  s.onload = function() {{ _initChartsArea_{first_id}(); }};
+  document.head.appendChild(s);
+}}
+if (document.readyState === 'loading')
+  document.addEventListener('DOMContentLoaded', function() {{ tryCDN(0); }});
+else tryCDN(0);
+
+/* skin state (updated per area via _initSkinForArea) */
+var _skinCid = _AREA_SKIN_CID[{first_id}];
+var _skinPool = [];
+var _skinReady = false;
+var _curSid = '001';
+var _heroName = _AREA_HERO_NAME[{first_id}];
+
+function _setBg(sid) {{
+  _curSid = sid;
+  document.body.style.setProperty('--bg-image', 'url(https://wegame.gtimg.com/g.26-r.c2d3c/helper/lol/assis/images/resources/skins/original/' + _skinCid + '-' + sid + '.jpg)');
+}}
+function _updateTooltip() {{
+  var btn = document.getElementById('skinSwitchBtn');
+  if (btn) btn.title = '招牌英雄' + _heroName + '有' + _skinPool.length + '个皮肤';
+}}
+function _detectSkins() {{
+  if (!_skinCid) {{
+    var btn = document.getElementById('skinSwitchBtn');
+    if (btn) btn.style.display = 'none';
+    return;
+  }}
+  var total = 21, done = 0;
+  function ck(sid, ok) {{ if (ok) _skinPool.push(sid); done++; if (done >= total) {{ _skinReady = true; var btn = document.getElementById('skinSwitchBtn'); if (btn) {{ btn.classList.remove('loading'); _updateTooltip(); }} if (_skinPool.indexOf('001') === -1 && _skinPool.indexOf('000') !== -1) _setBg('000'); else if (_skinPool.length === 0) document.body.style.setProperty('--bg-image', 'none'); }} }}
+  for (var i = 0; i <= 20; i++) {{ (function(sid) {{ var img = new Image(); img.onload = function() {{ ck(sid, true); }}; img.onerror = function() {{ ck(sid, false); }}; img.src = 'https://wegame.gtimg.com/g.26-r.c2d3c/helper/lol/assis/images/resources/skins/original/' + _skinCid + '-' + sid + '.jpg'; }})(('00' + i).slice(-3)); }}
+}}
+function _initSkinForArea(aid) {{
+  _skinCid = _AREA_SKIN_CID[aid] || 0;
+  _heroName = _AREA_HERO_NAME[aid] || '';
+  _skinPool = [];
+  _skinReady = false;
+  _curSid = '001';
+  if (_skinCid) {{
+    document.body.style.setProperty('--bg-image',
+      'url(https://wegame.gtimg.com/g.26-r.c2d3c/helper/lol/assis/images/resources/skins/original/' + _skinCid + '-001.jpg)');
+  }} else {{
+    document.body.style.setProperty('--bg-image', 'none');
+  }}
+  var btn = document.getElementById('skinSwitchBtn');
+  if (btn) {{
+    btn.classList.add('loading');
+    btn.title = '皮肤检测中…';
+    btn.onclick = function() {{
+      if (!_skinReady) {{ alert('皮肤资源检测中…'); return; }}
+      if (_skinPool.length <= 1) return;
+      var idx = _skinPool.indexOf(_curSid);
+      idx = (idx + 1) % _skinPool.length;
+      _setBg(_skinPool[idx]);
+    }};
+  }}
+  _detectSkins();
+}}
+_initSkinForArea({first_id});
+</script>
+</body>
+</html>"""
+
+
 def _build_empty_report(db_path: str) -> str:
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -3827,34 +4090,17 @@ code{{background:#141b22;padding:2px 8px;border-radius:4px;color:#c8aa6e}}
 </body>
 </html>"""
 
-def generate_report(
-    db_path: str = "wegame_matches.db",
-    output_path: str = "report.html",
+def _compute_all_results(
+    matches: list[dict],
+    champion_mastery: list[dict],
+    season_history: list[dict],
+    summoner_profile: dict | None,
+    career_overview: dict | None,
+    overview: dict,
     session_gap_hours: float = 2.0,
-) -> str:
-    db_abs = str(Path(db_path).resolve())
-    if not Path(db_path).exists():
-        raise FileNotFoundError(f"数据库文件不存在: {db_abs}")
-
-    # 输出文件名添加日期后缀
-    out_path = Path(output_path)
-    date_suffix = datetime.now().strftime("%Y-%m-%d")
-    stem = out_path.stem
-    ext = out_path.suffix
-    dated_output = out_path.with_name(f"{stem}_{date_suffix}{ext}")
-
-    matches = _load_matches(db_path)
-    champion_mastery = _load_champion_mastery(db_path)
-    season_history = _load_season_history(db_path)
-    summoner_profile = _load_summoner_profile(db_path)
-    career_overview = _load_career_overview(db_path)
-    if not matches:
-        html = _build_empty_report(db_abs)
-        dated_output.write_text(html, encoding="utf-8")
-        return str(dated_output.resolve())
-
-    overview = _analyze_overview(matches, summoner_profile)
-    results = {
+) -> dict:
+    """调用所有分析函数并合并结果。"""
+    return {
         "overview": overview,
         "win_rate_by_day": _analyze_win_rate_by_day_of_week(matches),
         "win_rate_by_hour": _analyze_win_rate_by_hour(matches),
@@ -3875,21 +4121,111 @@ def generate_report(
         "surrender": _analyze_surrender(matches),
         "afk_impact": _analyze_afk_impact(matches),
         "gold_efficiency": _analyze_gold_efficiency(matches),
-        # 行为与心理
         "boomerang_effect": _analyze_boomerang_effect(matches),
         "one_more_game": _analyze_one_more_game(matches),
-        # 效率与风格
         "carry_profile": _analyze_carry_profile(matches),
         "multi_kill_impact": _analyze_multi_kill_impact(matches),
         "prime_time_matrix": _analyze_prime_time_matrix(matches),
-        # 赛季历史
         "season_tier_timeline": _analyze_season_tier_timeline(season_history),
         "season_stats": _analyze_season_stats(season_history),
-        # 生涯全景
         "summoner_profile_analysis": _analyze_summoner_profile(
             summoner_profile, career_overview, overview,
         ),
     }
+
+
+def generate_report(
+    db_path: str = "wegame_matches.db",
+    output_path: str = "report.html",
+    session_gap_hours: float = 2.0,
+    area_ids: list[int] | None = None,
+) -> str:
+    db_abs = str(Path(db_path).resolve())
+    if not Path(db_path).exists():
+        raise FileNotFoundError(f"数据库文件不存在: {db_abs}")
+
+    # 输出文件名添加日期后缀
+    out_path = Path(output_path)
+    date_suffix = datetime.now().strftime("%Y-%m-%d")
+    stem = out_path.stem
+    ext = out_path.suffix
+    dated_output = out_path.with_name(f"{stem}_{date_suffix}{ext}")
+
+    from ._data import get_game_area_name
+
+    # 单区模式 — 加载该区数据，生成普通报告
+    if area_ids and len(area_ids) == 1:
+        aid = area_ids[0]
+        area_name = get_game_area_name(aid)
+        matches = _load_matches(db_path, area_ids=[aid])
+        champion_mastery = _load_champion_mastery(db_path, area_ids=[aid])
+        season_history = _load_season_history(db_path, area_ids=[aid])
+        summoner_profile = _load_summoner_profile(db_path, area_ids=[aid])
+        career_overview = _load_career_overview(db_path, area_ids=[aid])
+        if not any([matches, champion_mastery, season_history, summoner_profile, career_overview]):
+            html = _build_empty_report(db_abs)
+            dated_output.write_text(html, encoding="utf-8")
+            return str(dated_output.resolve())
+        overview = _analyze_overview(matches, summoner_profile)
+        results = _compute_all_results(matches, champion_mastery, season_history,
+                                       summoner_profile, career_overview, overview,
+                                       session_gap_hours)
+        html = _build_html(results)
+        dated_output.write_text(html, encoding="utf-8")
+        return str(dated_output.resolve())
+
+    # 多区模式
+    if area_ids and len(area_ids) > 1:
+        area_data: dict[int, dict] = {}
+        for aid in area_ids:
+            area_name = get_game_area_name(aid)
+            print(f"  分析大区: {area_name}")
+            a_matches = _load_matches(db_path, area_ids=[aid])
+            a_cm = _load_champion_mastery(db_path, area_ids=[aid])
+            a_sh = _load_season_history(db_path, area_ids=[aid])
+            a_sp = _load_summoner_profile(db_path, area_ids=[aid])
+            a_co = _load_career_overview(db_path, area_ids=[aid])
+            if not any([a_matches, a_cm, a_sh, a_sp, a_co]):
+                print(f"    (该大区完全无数据，跳过)")
+                continue
+            a_ov = _analyze_overview(a_matches, a_sp)
+            a_results = _compute_all_results(a_matches, a_cm, a_sh, a_sp, a_co,
+                                            a_ov, session_gap_hours)
+            area_data[aid] = {"name": area_name, "results": a_results}
+
+        if not area_data:
+            html = _build_empty_report(db_abs)
+            dated_output.write_text(html, encoding="utf-8")
+            return str(dated_output.resolve())
+
+        # 文件名取第一个区名，多于1个区加"等N区"
+        area_names = [d["name"].split("（")[0] for d in area_data.values()]
+        first_name = area_names[0]
+        if len(area_names) > 1:
+            short_names = f"{first_name}等{len(area_names)}区"
+        else:
+            short_names = first_name
+        dated_output = out_path.with_name(f"{stem}_{short_names}_{date_suffix}{ext}")
+
+        html = _build_html_multi(area_data)
+        dated_output.write_text(html, encoding="utf-8")
+        return str(dated_output.resolve())
+
+    # 无 area_ids（全部数据）
+    matches = _load_matches(db_path)
+    champion_mastery = _load_champion_mastery(db_path)
+    season_history = _load_season_history(db_path)
+    summoner_profile = _load_summoner_profile(db_path)
+    career_overview = _load_career_overview(db_path)
+    if not matches:
+        html = _build_empty_report(db_abs)
+        dated_output.write_text(html, encoding="utf-8")
+        return str(dated_output.resolve())
+
+    overview = _analyze_overview(matches, summoner_profile)
+    results = _compute_all_results(matches, champion_mastery, season_history,
+                                   summoner_profile, career_overview, overview,
+                                   session_gap_hours)
     html = _build_html(results)
     dated_output.write_text(html, encoding="utf-8")
     return str(dated_output.resolve())

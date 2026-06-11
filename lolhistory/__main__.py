@@ -20,6 +20,7 @@ import argparse
 import logging
 import os
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -86,8 +87,11 @@ def build_parser() -> argparse.ArgumentParser:
     wg.add_argument("--tgp-biz-ticket", help="WeGame tgp_biz_ticket cookie")
     wg.add_argument("--tgp-id", help="WeGame tgp_id cookie")
     wg.add_argument("--openid", help="加密后的 openid，用于详情 API（省略则自动探测）")
-    wg.add_argument("--area", type=int, default=1,
-                    help="服务器大区（1=艾欧尼亚，默认: 1）")
+
+    # ── 数据范围（拉取与分析共用） ──────────────────────────────────────────
+    p.add_argument("--area", type=str, default="1",
+                   help="游戏大区：中文名(艾欧尼亚)、逗号分隔多区(艾欧尼亚,祖安)、"
+                        "'全部'/'all' 获取全部 29 区。默认: 1（艾欧尼亚）")
 
     # ── 获取选项 ────────────────────────────────────────────────────────
     fetch = p.add_argument_group("获取选项")
@@ -128,8 +132,13 @@ def build_parser() -> argparse.ArgumentParser:
 # WeGame 方法
 # ──────────────────────────────────────────────────────────────────────────
 
-def run_wegame(args) -> int:
-    """运行 WeGame API 对局导出。"""
+def run_wegame(args, area_ids: list[int] | None = None) -> int:
+    """运行 WeGame API 对局导出。
+
+    Args:
+        args: 命令行参数。
+        area_ids: 要拉取的大区 ID 列表。为 None 时从 args.area 解析。
+    """
     from ._wegame import (
         WegameApiClient, WegameApiError,
         load_cookies, validate_cookies, merge_cookies,
@@ -138,8 +147,12 @@ def run_wegame(args) -> int:
         parse_summoner_info, parse_player_recent_stat,
         parse_champions, parse_battle_report,
     )
-    from ._data import get_wegame_tier_name
+    from ._data import get_wegame_tier_name, get_game_area_name
     from ._export import export_csv, export_sqlite
+
+    if area_ids is None:
+        from ._data import resolve_areas
+        area_ids = resolve_areas(args.area)
 
     print("=" * 60)
     print("  英雄联盟对局历史导出 — WeGame API")
@@ -168,16 +181,17 @@ def run_wegame(args) -> int:
 
     delay = 101  # WeGame API 请求间隔，单位毫秒
     skip_tft = True
+    first_area = area_ids[0]
 
     client = WegameApiClient(cookies)
     if args.openid:
         client.set_openid(args.openid)
 
-    # ── 单场详情模式 ──────────────────────────────────────────────────
+    # ── 单场详情模式（仅第一个大区） ──────────────────────────────────
     if args.detail_game:
-        print(f"\n正在获取对局 {args.detail_game} 的详情...")
+        print(f"\n正在获取对局 {args.detail_game} 的详情（{get_game_area_name(first_area)}）...")
         try:
-            data = client.get_battle_detail(args.detail_game, area=args.area)
+            data = client.get_battle_detail(args.detail_game, area=first_area)
             detail = parse_battle_detail(data, client.openid or "")
 
             # 展示详情
@@ -231,8 +245,8 @@ def run_wegame(args) -> int:
             print(f"\n[API 错误] {e}", file=sys.stderr)
             return 1
 
-    # ── 常规模式: 获取对局列表 ──────────────────────────────────────────
-    print(f"\n正在连接 WeGame API（大区={args.area}）...")
+    # ── 连接测试（仅一次） ────────────────────────────────────────────────
+    print(f"\n正在连接 WeGame API...")
     if not client.test_connection():
         print("\n[错误] 连接失败。请检查:", file=sys.stderr)
         print("  1. Cookie 是否有效（未过期）", file=sys.stderr)
@@ -240,235 +254,307 @@ def run_wegame(args) -> int:
         return 1
     print("  [OK] 连接成功")
 
-    # ── 自动获取召唤师信息与生涯统计 ─────────────────────────────────
-    # 在获取对局列表之前自动执行，无需用户管理。
-    # 失败仅警告，不阻断对局导出流程。
-    summoner_profile_data = None
-    summoner_career_data = None
-    try:
-        logger.info("正在获取召唤师信息...")
-        si_data = client.get_summoner_info(area=args.area)
-        summoner_profile_data = parse_summoner_info(si_data)
+    # ── 多区循环 ───────────────────────────────────────────────────────────
+    total_all_areas = 0
+    areas_with_data = []
+    # 检测是否为"全部大区"模式（仅在该模式下应用等级过滤）
+    is_all_areas_mode = args.area.lower() in ("全部", "all") if isinstance(args.area, str) else False
+    if is_all_areas_mode:
+        logger.info("全部大区模式：默认仅拉取等级 ≥ 20 的账号")
 
-        # 显示关键信息
-        name = summoner_profile_data.get("召唤师名称", "Unknown")
-        tag = summoner_profile_data.get("标签", "")
-        level = summoner_profile_data.get("等级", 0)
-        tier = summoner_profile_data.get("段位", 0)
-        lp = summoner_profile_data.get("胜点", 0)
-        season_wins = summoner_profile_data.get("赛季胜场", 0)
-        season_total = summoner_profile_data.get("赛季总场次", 0)
-        display_name = f"{name}#{tag}" if tag else name
-        tier_display = get_wegame_tier_name(tier) if tier else "无段位"
-        if lp and tier:
-            tier_display = f"{tier_display} {lp}LP"
-        wr = (season_wins / max(season_total, 1) * 100) if season_total > 0 else 0
+    for area in area_ids:
+        area_name = get_game_area_name(area)
+        print()
+        logger.info(">> 处理大区: %s", area_name)
+        print(f"{'='*40}")
+        print(f"  大区: {area_name}")
+        print(f"{'='*40}")
 
-        print(f"\n  召唤师: {display_name}")
-        print(f"  等级: {level} | 段位: {tier_display}")
-        if season_total > 0:
-            print(f"  赛季: {season_wins}胜/{season_total - season_wins}负 "
-                  f"({wr:.1f}%) | 总场次: {season_total}")
-
-        # 缓存 openid 用于后续 GetBattleDetail / GetPlayerRecentStat 调用
-        oid = summoner_profile_data.get("openid", "")
-        if oid and not client.openid:
-            client.set_openid(oid)
-            logger.info("已缓存 openid（来自 GetSummonerInfo）")
-
-        # 获取生涯统计（需要 openid）
-        if oid:
-            logger.info("正在获取生涯统计...")
-            sc_data = client.get_player_recent_stat(oid, area=args.area)
-            summoner_career_data = parse_player_recent_stat(sc_data)
-
-            total_kills = summoner_career_data.get("生涯总击杀", 0)
-            total_mvps = summoner_career_data.get("生涯MVP", 0)
-            total_svps = summoner_career_data.get("生涯SVP", 0)
-            total_pentas = summoner_career_data.get("生涯五杀", 0)
-            max_wins = summoner_career_data.get("最长连胜", 0)
-            recent = f"{summoner_career_data.get('近期胜场', 0)}W/{summoner_career_data.get('近期场次', 0)}场"
-            print(f"  生涯: {total_kills}击杀 | MVP×{total_mvps} SVP×{total_svps} "
-                  f"| 五杀×{total_pentas} | 最长连胜{max_wins}")
-            print(f"  近30天: {recent}")
-
-    except WegameApiError as e:
-        logger.warning("获取召唤师/生涯信息失败（不影响对局导出）: %s", e)
-    except Exception as e:
-        logger.warning("获取召唤师/生涯信息时出现意外错误: %s", e)
-
-    # ── 自动获取英雄熟练度（GetChampion） ─────────────────────────────────
-    # 需要 openid，在 get_summoner_info 成功后自动执行。
-    # 失败仅警告，不阻断主流程。
-    champions_data = None
-    oid = client.openid
-    if oid:
+        # ── 自动获取召唤师信息与生涯统计 ─────────────────────────────────
+        # 在获取对局列表之前自动执行，无需用户管理。
+        # 失败仅警告，不阻断对局导出流程。
+        summoner_profile_data = None
+        summoner_career_data = None
+        _silent_stdout = None  # 无账号时重定向 stdout
         try:
-            logger.info("正在获取英雄熟练度数据...")
-            champ_raw = client.get_champions(oid, area=args.area)
-            champions_data = parse_champions(champ_raw)
-            champ_count = len(champions_data)
-            # 简要统计：按熟练度排序，显示前 3
-            top_champs = sorted(
-                champions_data, key=lambda x: x.get("熟练度", 0), reverse=True
-            )[:3]
-            top_names = [f"英雄{ch['英雄ID']}({ch['熟练度']})" for ch in top_champs]
-            print(f"  英雄熟练度: {champ_count}个英雄")
-            print(f"  熟练度前3: {', '.join(top_names)}")
+            logger.info("正在获取召唤师信息...")
+            si_data = client.get_summoner_info(area=area)
+            summoner_profile_data = parse_summoner_info(si_data)
+
+            # 显示关键信息
+            name = summoner_profile_data.get("召唤师名称", "Unknown")
+            tag = summoner_profile_data.get("标签", "")
+            level = summoner_profile_data.get("等级", 0)
+            tier = summoner_profile_data.get("段位", 0)
+            lp = summoner_profile_data.get("胜点", 0)
+            season_wins = summoner_profile_data.get("赛季胜场", 0)
+            season_total = summoner_profile_data.get("赛季总场次", 0)
+            display_name = f"{name}#{tag}" if tag else name
+            tier_display = get_wegame_tier_name(tier) if tier else "无段位"
+            if lp and tier:
+                tier_display = f"{tier_display} {lp}LP"
+            wr = (season_wins / max(season_total, 1) * 100) if season_total > 0 else 0
+
+            print(f"\n  召唤师: {display_name}")
+            print(f"  等级: {level} | 段位: {tier_display}")
+
+            # ── 全部大区模式：等级过滤 ─────────────────────────────────────
+            # 仅当 --area 全部/all 时生效，单个大区或自定义列表不受影响
+            if is_all_areas_mode and level < 20:
+                print(f"  [跳过] 等级 {level} < 20，跳过该大区")
+                continue
+            if season_total > 0:
+                print(f"  赛季: {season_wins}胜/{season_total - season_wins}负 "
+                      f"({wr:.1f}%) | 总场次: {season_total}")
+
+            # 缓存 openid 用于后续 GetBattleDetail / GetPlayerRecentStat 调用
+            # 每个大区独立 openid，需在每个循环中更新
+            oid = summoner_profile_data.get("openid", "")
+            if oid:
+                client.set_openid(oid)
+                logger.info("已缓存 openid（大区=%s）", area_name)
+
+            # 获取生涯统计（需要 openid）
+            if oid:
+                logger.info("正在获取生涯统计...")
+                sc_data = client.get_player_recent_stat(oid, area=area)
+                summoner_career_data = parse_player_recent_stat(sc_data)
+
+                total_kills = summoner_career_data.get("生涯总击杀", 0)
+                total_mvps = summoner_career_data.get("生涯MVP", 0)
+                total_svps = summoner_career_data.get("生涯SVP", 0)
+                total_pentas = summoner_career_data.get("生涯五杀", 0)
+                max_wins = summoner_career_data.get("最长连胜", 0)
+                recent = f"{summoner_career_data.get('近期胜场', 0)}W/{summoner_career_data.get('近期场次', 0)}场"
+                print(f"  生涯: {total_kills}击杀 | MVP×{total_mvps} SVP×{total_svps} "
+                      f"| 五杀×{total_pentas} | 最长连胜{max_wins}")
+                print(f"  近30天: {recent}")
+
         except WegameApiError as e:
-            logger.warning("获取英雄熟练度失败（不影响对局导出）: %s", e)
+            logger.warning("获取召唤师/生涯信息失败（不影响对局导出）: %s", e)
         except Exception as e:
-            logger.warning("获取英雄熟练度时出现意外错误: %s", e)
-    else:
-        logger.info("跳过英雄熟练度获取（缺少 openid）")
+            logger.warning("获取召唤师/生涯信息时出现意外错误: %s", e)
 
-    # ── 自动获取赛季战斗报告（GetBattleReport） ──────────────────────────
-    # 使用 puin 认证，不依赖 openid。失败仅警告。
-    battle_report_data = None
-    try:
-        logger.info("正在获取赛季战斗报告...")
-        br_raw = client.get_battle_report(area=args.area)
-        battle_report_data = parse_battle_report(br_raw)
-        bc = battle_report_data.get("battle_count", {})
-        seasons = battle_report_data.get("season_list", [])
-        total_all = bc.get("全部总场", 0)
-        print(f"  战斗报告: 全模式 {total_all} 场, {len(seasons)} 个赛季记录")
-    except WegameApiError as e:
-        logger.warning("获取赛季战斗报告失败（不影响对局导出）: %s", e)
-    except Exception as e:
-        logger.warning("获取赛季战斗报告时出现意外错误: %s", e)
+        # ── 无账号检测 ───────────────────────────────────────────────────────
+        # 无召唤师名称 → 该大区无账号 → 后续输出全部静默（仅保留标题行）
+        if summoner_profile_data:
+            _name = summoner_profile_data.get("召唤师名称", "")
+        else:
+            _name = ""
+        if is_all_areas_mode and _name in ("", "Unknown"):
+            _silent_stdout = open(os.devnull, "w", encoding="utf-8")
+            _saved_stdout = sys.stdout
+            sys.stdout = _silent_stdout
 
-    # ── 获取对局列表 ────────────────────────────────────────────────────
-    # 提前确定输出路径，供列表和详情两阶段独立查询 DB
-    prefix = "wegame_matches"
-    db_path = str(Path(args.output_dir) / f"{prefix}.db")
+        # ── 自动获取英雄熟练度（GetChampion） ─────────────────────────────────
+        # 需要 openid，在 get_summoner_info 成功后自动执行。
+        # 失败仅警告，不阻断主流程。
+        champions_data = None
+        oid = client.openid
+        if oid:
+            try:
+                logger.info("正在获取英雄熟练度数据...")
+                champ_raw = client.get_champions(oid, area=area)
+                champions_data = parse_champions(champ_raw)
+                champ_count = len(champions_data)
+                # 简要统计：按熟练度排序，显示前 3
+                top_champs = sorted(
+                    champions_data, key=lambda x: x.get("熟练度", 0), reverse=True
+                )[:3]
+                top_names = [f"英雄{ch['英雄ID']}({ch['熟练度']})" for ch in top_champs]
+                print(f"  英雄熟练度: {champ_count}个英雄")
+                print(f"  熟练度前3: {', '.join(top_names)}")
+            except WegameApiError as e:
+                logger.warning("获取英雄熟练度失败（不影响对局导出）: %s", e)
+            except Exception as e:
+                logger.warning("获取英雄熟练度时出现意外错误: %s", e)
+        else:
+            logger.info("跳过英雄熟练度获取（缺少 openid）")
 
-    # 查询 match_summary 中已有的对局 ID，避免重复获取列表 API
-    existing_ids = set()
-    if os.path.exists(db_path):
-        import sqlite3
-        conn = sqlite3.connect(db_path)
-        rows = conn.execute(
-            "SELECT game_id FROM match_summary WHERE area = ?", (args.area,)
-        ).fetchall()
-        existing_ids = {r[0] for r in rows}
-        conn.close()
-        if existing_ids:
-            print(f"  数据库中已有 {len(existing_ids)} 条记录，将跳过重复获取")
+        # ── 自动获取赛季战斗报告（GetBattleReport） ──────────────────────────
+        # 使用 puin 认证，不依赖 openid。失败仅警告。
+        battle_report_data = None
+        try:
+            logger.info("正在获取赛季战斗报告...")
+            br_raw = client.get_battle_report(area=area)
+            battle_report_data = parse_battle_report(br_raw)
+            bc = battle_report_data.get("battle_count", {})
+            seasons = battle_report_data.get("season_list", [])
+            total_all = bc.get("全部总场", 0)
+            print(f"  战斗报告: 全模式 {total_all} 场, {len(seasons)} 个赛季记录")
+        except WegameApiError as e:
+            logger.warning("获取赛季战斗报告失败（不影响对局导出）: %s", e)
+        except Exception as e:
+            logger.warning("获取赛季战斗报告时出现意外错误: %s", e)
 
-    print(f"\n正在获取对局列表（最多 {args.max_games} 场）...")
-    all_battles = fetch_battle_list(
-        client, area=args.area, max_games=args.max_games,
-        skip_tft=skip_tft, delay_ms=delay,
-        existing_ids=existing_ids or None,
-    )
+        # ── 获取对局列表 ────────────────────────────────────────────────────
+        # 提前确定输出路径，供列表和详情两阶段独立查询 DB
+        prefix = "wegame_matches"
+        db_path = str(Path(args.output_dir) / f"{prefix}.db")
 
-    total = len(all_battles)
-    print(f"\n共获取到: {total} 场对局")
-    if total == 0:
-        print("[提示] 未找到对局记录。")
-        client.close()
-        return 0
-
-    # 快速统计
-    wins = sum(1 for b in all_battles if b.get("win") == "Win")
-    losses = total - wins
-    wr = (wins / total * 100) if total > 0 else 0
-    print(f"  胜: {wins} | 负: {losses} | 胜率: {wr:.1f}%")
-
-    timestamps = []
-    for b in all_battles:
-        ts = int(b.get("game_start_time", "0")) / 1000.0
-        if ts > 0:
-            timestamps.append(ts)
-    if timestamps:
-        oldest = datetime.fromtimestamp(min(timestamps)).strftime("%Y-%m-%d")
-        newest = datetime.fromtimestamp(max(timestamps)).strftime("%Y-%m-%d")
-        print(f"  时间范围: {oldest} → {newest}")
-
-    # ── 获取详情（可选）─────────────────────────────────────────────────
-    detail_data = {}
-    if args.detail:
-        game_ids = [str(b.get("game_id", "")) for b in all_battles if b.get("game_id")]
-        game_ids_set = set(game_ids)
-
-        # 查询已有详情 + 回填缺失详情（应对之前未加 --detail 导致 detail 表为空）
-        existing_detail_ids: set[str] = set()
-        backfill_ids: set[str] = set()
+        # 查询 match_summary 中已有的对局 ID，避免重复获取列表 API
+        existing_ids = set()
         if os.path.exists(db_path):
             import sqlite3
             conn = sqlite3.connect(db_path)
             rows = conn.execute(
-                "SELECT DISTINCT game_id FROM match_detail WHERE area = ?", (args.area,)
+                "SELECT game_id FROM match_summary WHERE area = ?", (area,)
             ).fetchall()
-            existing_detail_ids = {r[0] for r in rows}
-            # 回填：match_summary 有但 match_detail 缺失的对局
-            rows2 = conn.execute("""
-                SELECT DISTINCT ms.game_id FROM match_summary ms
-                WHERE ms.area = ?
-                AND ms.game_id NOT IN (
-                    SELECT DISTINCT game_id FROM match_detail WHERE area = ?
-                )
-            """, (args.area, args.area)).fetchall()
-            backfill_ids = {r[0] for r in rows2}
+            existing_ids = {r[0] for r in rows}
             conn.close()
+            if existing_ids:
+                print(f"  数据库中已有 {len(existing_ids)} 条记录，将跳过重复获取")
 
-        # 合并：当前获取的对局在前，历史缺失详情的对局在后
-        new_backfill = backfill_ids - game_ids_set - existing_detail_ids
-        if new_backfill:
-            print(f"\n  发现 {len(new_backfill)} 场历史对局缺少详情，将一并补获取")
-        all_detail_ids = game_ids + sorted(new_backfill)
+        print(f"\n正在获取对局列表（最多 {args.max_games} 场）...")
+        all_battles = fetch_battle_list(
+            client, area=area, max_games=args.max_games,
+            skip_tft=skip_tft, delay_ms=delay,
+            existing_ids=existing_ids or None,
+        )
 
-        new_game_ids = [gid for gid in all_detail_ids if gid not in existing_detail_ids]
-        skipped = len(all_detail_ids) - len(new_game_ids)
-        if skipped:
-            print(f"\n正在获取 {len(new_game_ids)} 场对局详情（{skipped} 场已有，跳过）...")
-        else:
-            print(f"\n正在获取 {len(all_detail_ids)} 场对局详情...")
-        est_min = len(new_game_ids) * delay / 1000 / 60
-        if est_min > 1:
-            print(f"  （预计约 {est_min:.0f} 分钟，延迟 {delay}ms）")
-        if new_game_ids:
-            detail_data = fetch_battle_details(
-                client, new_game_ids, area=args.area, delay_ms=delay)
+        total = len(all_battles)
+        print(f"\n共获取到: {total} 场对局")
+        if total == 0:
+            print("[提示] 未找到对局记录。")
+            # 无对局数据时仍需保存辅助表（召唤师资料/熟练度/赛季报告/生涯总览），
+            # 因为每个大区有独立的召唤师资料、赛季段位历史、全模式总览等。
+            if not args.no_sqlite:
+                export_sqlite([], None, db_path,
+                              self_openid=client.openid or "",
+                              summoner_info=summoner_profile_data,
+                              summoner_career=summoner_career_data,
+                              puin=client.puin,
+                              champions=champions_data,
+                              battle_report=battle_report_data,
+                              area=area)
+                print(f"  [SQLite] → {db_path}（辅助表已更新）")
+            if battle_report_data and battle_report_data.get("battle_count", {}).get("全部总场", 0) > 0:
+                areas_with_data.append(area_name)
+            if _silent_stdout:
+                sys.stdout = _saved_stdout
+                _silent_stdout.close()
+                _silent_stdout = None
+            continue
 
-    # ── 解析与导出 ──────────────────────────────────────────────────────
-    out = Path(args.output_dir)
-    out.mkdir(parents=True, exist_ok=True)
+        # 快速统计
+        wins = sum(1 for b in all_battles if b.get("win") == "Win")
+        losses = total - wins
+        wr = (wins / total * 100) if total > 0 else 0
+        print(f"  胜: {wins} | 负: {losses} | 胜率: {wr:.1f}%")
 
-    print(f"\n正在导出...")
-    parsed = [parse_battle_summary(b, area=args.area) for b in all_battles]
-    results = {}
+        timestamps = []
+        for b in all_battles:
+            ts = int(b.get("game_start_time", "0")) / 1000.0
+            if ts > 0:
+                timestamps.append(ts)
+        if timestamps:
+            oldest = datetime.fromtimestamp(min(timestamps)).strftime("%Y-%m-%d")
+            newest = datetime.fromtimestamp(max(timestamps)).strftime("%Y-%m-%d")
+            print(f"  时间范围: {oldest} → {newest}")
 
-    if not args.no_csv:
-        cp = str(out / f"{prefix}.csv")
-        export_csv(parsed, cp)
-        results["csv"] = cp
+        # ── 获取详情（可选）─────────────────────────────────────────────────
+        detail_data = {}
+        if args.detail:
+            game_ids = [str(b.get("game_id", "")) for b in all_battles if b.get("game_id")]
+            game_ids_set = set(game_ids)
 
-    # SQLite 导出（默认总是执行，除非 --no-sqlite）
-    if not args.no_sqlite:
-        sp = str(out / f"{prefix}.db")
-        export_sqlite(parsed, detail_data if detail_data else None, sp,
-                      self_openid=client.openid or "",
-                      summoner_info=summoner_profile_data,
-                      summoner_career=summoner_career_data,
-                      puin=client.puin,
-                      champions=champions_data,
-                      battle_report=battle_report_data,
-                      area=args.area)
-        results["sqlite"] = sp
+            # 查询已有详情 + 回填缺失详情（应对之前未加 --detail 导致 detail 表为空）
+            existing_detail_ids: set[str] = set()
+            backfill_ids: set[str] = set()
+            if os.path.exists(db_path):
+                import sqlite3
+                conn = sqlite3.connect(db_path)
+                rows = conn.execute(
+                    "SELECT DISTINCT game_id FROM match_detail WHERE area = ?", (area,)
+                ).fetchall()
+                existing_detail_ids = {r[0] for r in rows}
+                # 回填：match_summary 有但 match_detail 缺失的对局
+                rows2 = conn.execute("""
+                    SELECT DISTINCT ms.game_id FROM match_summary ms
+                    WHERE ms.area = ?
+                    AND ms.game_id NOT IN (
+                        SELECT DISTINCT game_id FROM match_detail WHERE area = ?
+                    )
+                """, (area, area)).fetchall()
+                backfill_ids = {r[0] for r in rows2}
+                conn.close()
 
-    for fmt_name, filepath in results.items():
-        print(f"  [{fmt_name.upper()}] → {filepath}")
+            # 合并：当前获取的对局在前，历史缺失详情的对局在后
+            new_backfill = backfill_ids - game_ids_set - existing_detail_ids
+            if new_backfill:
+                print(f"\n  发现 {len(new_backfill)} 场历史对局缺少详情，将一并补获取")
+            all_detail_ids = game_ids + sorted(new_backfill)
 
-    # ── 摘要 ────────────────────────────────────────────────────────────
-    print(f"\n{'=' * 60}")
-    print(f"  导出完成！")
-    print(f"  数据来源: WeGame API（大区={args.area}）")
-    print(f"  对局总数: {total}")
-    print(f"  详情数据: {'有' if detail_data else '无'}")
-    print(f"  SQLite: {'有' if not args.no_sqlite else '无'}")
-    print(f"{'=' * 60}\n")
+            new_game_ids = [gid for gid in all_detail_ids if gid not in existing_detail_ids]
+            skipped = len(all_detail_ids) - len(new_game_ids)
+            if skipped:
+                print(f"\n正在获取 {len(new_game_ids)} 场对局详情（{skipped} 场已有，跳过）...")
+            else:
+                print(f"\n正在获取 {len(all_detail_ids)} 场对局详情...")
+            est_min = len(new_game_ids) * delay / 1000 / 60
+            if est_min > 1:
+                print(f"  （预计约 {est_min:.0f} 分钟，延迟 {delay}ms）")
+            if new_game_ids:
+                detail_data = fetch_battle_details(
+                    client, new_game_ids, area=area, delay_ms=delay)
+
+        # ── 解析与导出 ──────────────────────────────────────────────────────
+        out = Path(args.output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+
+        print(f"\n正在导出...")
+        time.sleep(1)  # 导出前短暂延迟
+        parsed = [parse_battle_summary(b, area=area) for b in all_battles]
+        results = {}
+
+        if not args.no_csv:
+            cp = str(out / f"{prefix}.csv")
+            export_csv(parsed, cp)
+            results["csv"] = cp
+
+        # SQLite 导出（默认总是执行，除非 --no-sqlite）
+        if not args.no_sqlite:
+            sp = str(out / f"{prefix}.db")
+            export_sqlite(parsed, detail_data if detail_data else None, sp,
+                          self_openid=client.openid or "",
+                          summoner_info=summoner_profile_data,
+                          summoner_career=summoner_career_data,
+                          puin=client.puin,
+                          champions=champions_data,
+                          battle_report=battle_report_data,
+                          area=area)
+            results["sqlite"] = sp
+
+        for fmt_name, filepath in results.items():
+            print(f"  [{fmt_name.upper()}] → {filepath}")
+
+        # ── 摘要 ────────────────────────────────────────────────────────────
+        print(f"\n{'=' * 60}")
+        print(f"  导出完成！")
+        print(f"  数据来源: WeGame API（大区={area_name}）")
+        print(f"  对局总数: {total}")
+        print(f"  详情数据: {'有' if detail_data else '无'}")
+        print(f"  SQLite: {'有' if not args.no_sqlite else '无'}")
+        print(f"{'=' * 60}\n")
+
+        total_all_areas += total
+        if battle_report_data and battle_report_data.get("battle_count", {}).get("全部总场", 0) > 0:
+            areas_with_data.append(area_name)
+        if _silent_stdout:
+            sys.stdout = _saved_stdout
+            _silent_stdout.close()
+            _silent_stdout = None
+
+# ── 全局摘要 ────────────────────────────────────────────────────────────
+    actual_count = len(areas_with_data)
+    if actual_count < len(area_ids):
+        print(f"{'=' * 60}")
+        print(f"  全部完成！{actual_count}/{len(area_ids)} 个大区有数据，共 {total_all_areas} 场对局")
+        print(f"{'=' * 60}\n")
+    else:
+        print(f"{'=' * 60}")
+        print(f"  全部完成！共拉取 {len(area_ids)} 个大区，{total_all_areas} 场对局")
+        print(f"{'=' * 60}\n")
 
     client.close()
     return 0
@@ -601,11 +687,17 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     log_level = logging.DEBUG if args.verbose else logging.INFO
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    if args.verbose:
+        logging.basicConfig(
+            level=log_level,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            datefmt="%H:%M:%S",
+        )
+    else:
+        logging.basicConfig(
+            level=log_level,
+            format="%(message)s",  # 普通模式：只显示消息本身，无时间戳/模块前缀
+        )
 
     # 根证书安装模式
     if args.install_cert:
@@ -619,6 +711,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.extract_cookies is not None:
         return run_extract_cookies(args)
 
+    # 解析大区参数（拉取与分析共用）
+    from ._data import resolve_areas, get_game_area_name
+    area_ids = resolve_areas(args.area)
+    if area_ids:
+        area_names = [get_game_area_name(a) for a in area_ids]
+        logger.info("目标大区: %s", ", ".join(area_names))
+
     # 数据分析模式
     if args.analyze:
         from ._analysis import generate_report
@@ -626,6 +725,7 @@ def main(argv: list[str] | None = None) -> int:
             path = generate_report(
                 db_path=args.db,
                 output_path=args.html_output,
+                area_ids=area_ids,
             )
             print(f"\n[OK] 分析报告已生成: {path}")
             print(f"   在浏览器中打开即可查看。")
@@ -640,7 +740,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         return 0
 
-    return run_wegame(args)
+    return run_wegame(args, area_ids=area_ids)
 
 
 if __name__ == "__main__":

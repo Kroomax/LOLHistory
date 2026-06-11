@@ -1,7 +1,10 @@
 """共享常量与工具函数。"""
 
+import logging
 import re
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 # ── 队列ID → 名称 ─────────────────────────────────────────────────────────
 
@@ -306,6 +309,64 @@ GAME_AREA_INFO: dict[int, dict[str, str]] = {
     30: {"strid": "BGP1","isp": "全网络大区一","name": "男爵领域",    "idc": "上海腾讯宝信DC","tcls": "261"},
     31: {"strid": "BGP2","isp": "全网络大区二","name": "峡谷之巅",    "idc": "上海腾讯宝信DC","tcls": "517"},
 }
+
+# ── 大区解析 ──────────────────────────────────────────────────────────────
+
+# 全部有效大区 ID 列表（按编号升序）
+ALL_AREA_IDS: list[int] = sorted(GAME_AREA_INFO.keys())
+
+# 大区中文名 → ID 反向映射
+AREA_NAME_TO_ID: dict[str, int] = {
+    area["name"]: aid for aid, area in GAME_AREA_INFO.items()
+}
+
+
+def resolve_areas(area_arg: str) -> list[int]:
+    """将用户输入的 --area 参数解析为大区 ID 列表。
+
+    支持格式：
+    - 单区： ``"艾欧尼亚"`` 或 ``"1"``
+    - 多区： ``"艾欧尼亚,祖安"``（逗号分隔，兼容中文逗号）
+    - 全部： ``"全部"`` 或 ``"all"``
+    - 默认 fallback： ``[1]``
+
+    无效名称会被跳过并发出 warning，去重保序。空输入返回 ``[1]``。
+    """
+    s = area_arg.strip()
+    if not s:
+        return [1]
+
+    # 全部
+    if s.lower() in ("全部", "all"):
+        return ALL_AREA_IDS
+
+    # 逗号分隔（兼容中文逗号）
+    tokens = [t.strip() for t in re.split(r"[，,]", s) if t.strip()]
+
+    seen: set[int] = set()
+    result: list[int] = []
+    for token in tokens:
+        aid = None
+        # 尝试数字 ID
+        try:
+            aid = int(token)
+        except ValueError:
+            pass
+        # 尝试中文名
+        if aid is None:
+            aid = AREA_NAME_TO_ID.get(token)
+        if aid is None:
+            logger.warning("未知大区名称: %s，已跳过", token)
+            continue
+        if aid not in GAME_AREA_INFO:
+            logger.warning("大区 ID %d 不在已知列表中，已跳过", aid)
+            continue
+        if aid not in seen:
+            seen.add(aid)
+            result.append(aid)
+
+    return result if result else [1]
+
 
 # ── 工具函数 ──────────────────────────────────────────────────────────────
 
