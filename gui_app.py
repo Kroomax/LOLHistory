@@ -25,7 +25,6 @@ import threading
 import time
 import traceback
 import webbrowser
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -169,6 +168,118 @@ class QueueStringIO(io.StringIO):
 
     def isatty(self) -> bool:
         return False
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 数据概览查询 — 从 SQLite 计算完成页的 6 项指标
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _query_overview_stats(db_path: str, selected_areas: list[int]) -> dict:
+    """从 SQLite 查询完成页「数据概览」所需的 6 项新指标。
+
+    返回:
+        {
+            "main_area": "艾欧尼亚",
+            "summoner_name": "召唤师#tag",
+            "signature_champion": "李青",
+            "first_season": "S2赛季",
+            "career_total": "5000",
+            "highest_tier": "钻石",
+        }
+    """
+    import sqlite3
+    from lolhistory._data import (
+        GAME_AREA_INFO, get_champion_name, get_season_name, get_wegame_tier_name,
+    )
+
+    result = {
+        "main_area": "—",
+        "summoner_name": "—",
+        "signature_champion": "—",
+        "first_season": "—",
+        "career_total": "0",
+        "highest_tier": "—",
+    }
+
+    db = Path(db_path)
+    if not db.exists() or db.stat().st_size == 0:
+        return result
+
+    conn = sqlite3.connect(db_path)
+
+    try:
+        areas = selected_areas or [1]
+        ph = ",".join("?" * len(areas))
+
+        # ①+② 主玩大区 & 召唤师名称——选中大区中等级最高的那条
+        row = conn.execute(
+            f"SELECT area, summoner_name, name_tag FROM summoner_profile "
+            f"WHERE area IN ({ph}) ORDER BY level DESC LIMIT 1",
+            areas,
+        ).fetchone()
+        if row:
+            aid = row[0]
+            area_info = GAME_AREA_INFO.get(aid, {})
+            result["main_area"] = area_info.get("name", f"大区{aid}")
+            tag = (row[2] or "").strip()
+            result["summoner_name"] = f"{row[1]}#{tag}" if tag else row[1]
+            main_area = aid
+        else:
+            conn.close()
+            return result  # 没有任何数据
+
+        # ③ 招牌英雄——主玩大区，champion_mastery 总场次最高的英雄
+        row = conn.execute(
+            "SELECT champion_id, total_games FROM champion_mastery "
+            "WHERE area = ? ORDER BY total_games DESC LIMIT 1",
+            (main_area,),
+        ).fetchone()
+        if row and (row[1] or 0) > 0:
+            result["signature_champion"] = get_champion_name(row[0])
+
+        # ④ 入坑时间——全部选中大区中，有场次 > 0 的最早赛季
+        row = conn.execute(
+            f"SELECT sid FROM season_history WHERE area IN ({ph}) "
+            f"AND (total_games > 0 OR team_total > 0) "
+            f"ORDER BY sid ASC LIMIT 1",
+            areas,
+        ).fetchone()
+        if row:
+            result["first_season"] = get_season_name(row[0])
+
+        # ⑤ 对局总数——主玩大区的生涯总场次
+        row = conn.execute(
+            "SELECT total_all_games FROM career_overview "
+            "WHERE area = ? LIMIT 1",
+            (main_area,),
+        ).fetchone()
+        if row:
+            result["career_total"] = str(row[0] or 0)
+
+        # ⑥ 最高段位——主玩大区所有有场次的赛季中排名最高的段位
+        # WeGame 段位排序：8王 > 7宗 > 6大师 > 1钻 > 2翡 > 3铂 > 4金 > 5银
+        TIER_RANK = {8: 0, 7: 1, 6: 2, 1: 3, 2: 4, 3: 5, 4: 6, 5: 7}
+        best_tier = None
+        best_rank = 999
+        rows = conn.execute(
+            "SELECT tier, team_tier FROM season_history "
+            "WHERE area = ? AND (total_games > 0 OR team_total > 0)",
+            (main_area,),
+        ).fetchall()
+        for r in rows:
+            for t in (r[0], r[1]):
+                if t is not None and t != 0 and t != 255 and t in TIER_RANK:
+                    tr = TIER_RANK[t]
+                    if tr < best_rank:
+                        best_rank = tr
+                        best_tier = t
+        if best_tier is not None:
+            result["highest_tier"] = get_wegame_tier_name(best_tier)
+
+    finally:
+        conn.close()
+
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1651,6 +1762,7 @@ class LOLHistoryApp:
                 self._msg_queue.put(("progress", 5, ""))
 
                 total_all_areas = 0
+                area_levels: dict[int, int] = {}
                 for area in areas:
                     area_name = get_game_area_name(area)
                     self._msg_queue.put(("log", f"\n===== 大区: {area_name} =====\n"))
@@ -1671,6 +1783,7 @@ class LOLHistoryApp:
                         name = summoner_profile.get("召唤师名称", "Unknown")
                         tag = summoner_profile.get("标签", "")
                         level = summoner_profile.get("等级", 0)
+                        area_levels[area] = level
                         tier = summoner_profile.get("段位", 0)
                         lp = summoner_profile.get("胜点", 0)
                         season_wins = summoner_profile.get("赛季胜场", 0)
@@ -1917,7 +2030,12 @@ class LOLHistoryApp:
 
                 # ── 完成 ────────────────────────────────────────────────────
                 client.close()
-                self._msg_queue.put(("fetch_done", total, wins, report_path))
+
+                # ── 查询数据概览（完成页 6 项指标）─────────────────────────
+                overview_stats = _query_overview_stats(
+                    str(BASE_DIR / "wegame_matches.db"), areas,
+                )
+                self._msg_queue.put(("fetch_done", total, wins, report_path, overview_stats))
 
             finally:
                 sys.stdout = old_stdout
@@ -1926,7 +2044,8 @@ class LOLHistoryApp:
         except Exception as e:
             self._msg_queue.put(("error", f"数据拉取失败: {e}\n{traceback.format_exc()}"))
 
-    def _handle_fetch_done(self, total: int, wins: int, report_path: str):
+    def _handle_fetch_done(self, total: int, wins: int, report_path: str,
+                           overview_stats: dict | None = None):
         """拉取完成，切换到完成页。"""
         self._total_games = total
         self._total_wins = wins
@@ -1934,6 +2053,8 @@ class LOLHistoryApp:
         self._fetch_title.configure(text="拉取完成！")
         self._fetch_sub.configure(text=f"共获取 {total} 场对局记录")
         self._show_page(4)
+        # 立即更新数据概览
+        self._update_complete_stats(total, wins, report_path, overview_stats)
 
     def _handle_error(self, msg: str):
         """处理全局错误。"""
@@ -1968,14 +2089,14 @@ class LOLHistoryApp:
         self._hero_grid = tk.Frame(sc_inner, bg=THEME["card"])
         self._hero_grid.pack(fill="x")
 
-        # 6 个 hero stat 卡片
+        # 6 个 hero stat 卡片 — 新指标
         hero_items = [
+            ("主玩大区", "—", ""),
+            ("召唤师名称", "—", ""),
+            ("招牌英雄", "—", ""),
+            ("入坑时间", "—", ""),
             ("对局总数", "0", "场"),
-            ("胜率", "0", "%"),
-            ("胜场 / 负场", "0 / 0", ""),
-            ("数据库", "wegame_matches.db", ""),
-            ("报告文件", "report.html", ""),
-            ("时间", datetime.now().strftime("%Y-%m-%d %H:%M"), ""),
+            ("最高段位", "—", ""),
         ]
         self._hero_labels: dict[str, tk.Label] = {}
 
@@ -2035,20 +2156,28 @@ class LOLHistoryApp:
 
         return page
 
-    def _update_complete_stats(self, total: int, wins: int, report_path: str):
-        """更新完成页的统计数据。"""
-        from pathlib import Path
-        losses = total - wins
-        wr = (wins / total * 100) if total > 0 else 0
-
-        stats = {
-            "对局总数": (str(total), "场"),
-            "胜率": (f"{wr:.1f}", "%"),
-            "胜场 / 负场": (f"{wins} / {losses}", ""),
-            "数据库": (Path(self._db_path).name if self._db_path else "wegame_matches.db", ""),
-            "报告文件": (Path(report_path).name, ""),
-            "时间": (datetime.now().strftime("%Y-%m-%d %H:%M"), ""),
-        }
+    def _update_complete_stats(self, _total: int, _wins: int, _report_path: str,
+                                overview_stats: dict | None = None):
+        """更新完成页的数据概览（6 项新指标）。"""
+        if overview_stats:
+            stats = {
+                "主玩大区": (overview_stats.get("main_area", "—"), ""),
+                "召唤师名称": (overview_stats.get("summoner_name", "—"), ""),
+                "招牌英雄": (overview_stats.get("signature_champion", "—"), ""),
+                "入坑时间": (overview_stats.get("first_season", "—"), ""),
+                "对局总数": (overview_stats.get("career_total", "0"), "场"),
+                "最高段位": (overview_stats.get("highest_tier", "—"), ""),
+            }
+        else:
+            # 极低概率 fallback
+            stats = {
+                "主玩大区": ("—", ""),
+                "召唤师名称": ("—", ""),
+                "招牌英雄": ("—", ""),
+                "入坑时间": ("—", ""),
+                "对局总数": ("0", "场"),
+                "最高段位": ("—", ""),
+            }
 
         for label, (value, unit) in stats.items():
             if label in self._hero_labels:
@@ -2172,8 +2301,8 @@ class LOLHistoryApp:
                     self._handle_cert_error(msg[1])
 
                 elif msg_type == "fetch_done":
-                    self._handle_fetch_done(msg[1], msg[2], msg[3])
-                    self._update_complete_stats(msg[1], msg[2], msg[3])
+                    self._handle_fetch_done(msg[1], msg[2], msg[3],
+                                            msg[4] if len(msg) > 4 else None)
 
                 elif msg_type == "error":
                     self._handle_error(msg[1])
