@@ -188,7 +188,6 @@ def main() -> int:
     else:
         print("  [WARN] exe not found")
     print(f"\n  Tip: Copy dist\\{out_name}.exe anywhere to use it.")
-    print(f"       First run: click「安装根证书」in the GUI (no admin needed).")
 
     return 0
 

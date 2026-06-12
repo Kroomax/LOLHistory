@@ -90,16 +90,10 @@ Cookie（与 WeGame 助手页共享 session），必需 4 个：`puin`, `pkey`, 
 
 3. Fiddler/Charles 手动抓包 `www.wegame.com.cn` 的 Cookie 请求头，手写 JSON `{"puin":"...", "pkey":"...", ...}`
 
-### 已知限制
-
-- `count` 最大 10（超过返回 `8000002`）；offset ≥ 500 返回空
-- Cookie 过期返回 `8025009`（登录信息过期），需重新获取
-
 ### `_post()` extra_headers 模式
 
 `GetSummonerInfo` 需要 `trpc-caller: wegame.pallas.web.TftBattle`（其他接口用 `LolBattle`）。
-通过 `_post(path, body, extra_headers={"trpc-caller": "..."})` 临时覆盖请求头，
-内部用 save/restore + finally 保证不影响后续请求。
+通过 `_post(path, body, extra_headers={"trpc-caller": "..."})` 临时覆盖请求头，内部用 save/restore + finally 保证不影响后续请求。
 
 ### SQLite 表结构（6 张表）
 
@@ -120,8 +114,7 @@ WEGAME_TIER_NAMES = {0: "未定级", 1: "钻石", 2: "铂金", 3: "黄金",
                      8: "最强王者", 9: "翡翠", 255: "无数据"}
 ```
 
-注意：WeGame 编号方向与 Riot 不同——非大师段位数值越小段位越高（1=钻石，5=青铜），大师+从 6 开始递增。
-S13 新增翡翠以 9 追加，不改变原有编码。黑铁无独立 API 值，低于白银统一为 5=青铜。
+注意：S13 新增翡翠以 9 追加，不改变原有编码。黑铁无独立 API 值，低于白银统一为 5=青铜。
 
 ## 数据分析 (_analysis.py)
 
@@ -144,10 +137,6 @@ CLI: `python -m lolhistory --analyze [--db wegame_matches.db] [--output report.h
 
 ### 关键实现细节
 
-- **雷达图归一化**: 逐维度比率归一化（全对局平均 = 50 分基准，2倍平均 = 100），避免跨维度量纲不同导致小值归零
-- **GPM 计算**: 存储计算后的 GPM 值而非原始金币，防止索引错位 bug
-- **经济效率排除**: <4 分钟（240s）的重开局不计入 GPM 统计
-- **位置胜率极差**: 排除场次 <5 的位置，避免小样本虚高
 - **Chart.js v4 CDN**: bootcdn → jsdelivr → unpkg 三级 fallback（国内友好）
 - **所有标签中文化**: 仅保留 KDA/GPM/LP 等常用缩写
 - **无新依赖**: 仅使用 stdlib（`sqlite3`, `json`, `datetime`, `collections`, `math`, `statistics`）
@@ -170,14 +159,7 @@ CLI: `python -m lolhistory --analyze [--db wegame_matches.db] [--output report.h
 
 **所有图表都不显示时，优先检查 JS 语法错误**——Chart.js 在遇到第一个语法错误时就停止执行，导致全部图表空白。
 
-**常见根因：f-string 中 `{{}}` 嵌套对象括号计数错误**。例如：
-```python
-# ❌ 错误 — scales 被提前关闭，y 变成 options 的顶级属性
-scales:{{x:{{...grid:{{color:'#2a3a4a'}}}}}},y:{{...}}}
-#                                    ↑ 这里 }}}} 同时关闭 grid + x + scales
-#                                    ↓ 正确：只关闭 grid + x，scales 保持打开
-scales:{{x:{{...grid:{{color:'#2a3a4a'}}}},y:{{...}}}}
-```
+**常见根因：f-string 中 `{{}}` 嵌套对象括号计数错误**。
 
 **排查流程：**
 1. 用 `node -e "new Function(scriptBody)"` 检查 JS 语法，无需浏览器

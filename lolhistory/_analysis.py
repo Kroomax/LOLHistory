@@ -4535,7 +4535,7 @@ def generate_report(
             )
 
             # 用 OrderedDict 确保全区排第一
-            area_data_all = {0: {"name": "全区数据分析", "results": combined_results}}
+            area_data_all = {0: {"name": "全区生涯数据", "results": combined_results}}
             area_data_all.update(area_data)
             area_data = area_data_all
 
