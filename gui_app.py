@@ -1017,6 +1017,7 @@ class LOLHistoryApp:
                 result = subprocess.run(
                     ["certutil", "-user", "-store", "Root"],
                     capture_output=True, text=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
                 )
                 if "mitmproxy" in result.stdout:
                     return "installed"
