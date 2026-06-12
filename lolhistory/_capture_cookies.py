@@ -3,7 +3,7 @@
 替换 Reqable/Fiddler 手动抓包流程。
 用法: python -m lolhistory --capture-cookies [-o cookies.json]
 
-技术方案：系统代理 + mitmproxy HTTP 代理。
+技术方案：系统代理 + mitmproxy HTTP 代理（仅拦截 wegame.com.cn 流量）。
 WeGame QBCore 走系统代理，Cookie 头中包含完整认证信息（逗号分隔）。
 """
 
@@ -73,46 +73,170 @@ def _set_windows_proxy(proxy_addr: str = "127.0.0.1:8080", enable: bool = True):
         winreg.CloseKey(key)
 
 
-def _get_windows_proxy() -> Optional[str]:
-    """获取当前 Windows 系统代理设置。"""
+def _save_proxy_state() -> dict:
+    """保存当前 Windows 完整代理状态（Proxy + PAC），用于后续恢复。"""
+    state = {"enabled": False, "server": "", "override": "", "auto_config_url": ""}
     try:
         import winreg
     except ImportError:
-        return None
+        return state
     key_path = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ)
-        enabled, _ = winreg.QueryValueEx(key, "ProxyEnable")
-        if enabled:
+        try:
+            enabled, _ = winreg.QueryValueEx(key, "ProxyEnable")
+            state["enabled"] = bool(enabled)
+        except FileNotFoundError:
+            pass
+        try:
             server, _ = winreg.QueryValueEx(key, "ProxyServer")
-            winreg.CloseKey(key)
-            return server
+            state["server"] = server or ""
+        except FileNotFoundError:
+            pass
+        try:
+            override, _ = winreg.QueryValueEx(key, "ProxyOverride")
+            state["override"] = override or ""
+        except FileNotFoundError:
+            pass
+        try:
+            acu, _ = winreg.QueryValueEx(key, "AutoConfigURL")
+            state["auto_config_url"] = acu or ""
+        except FileNotFoundError:
+            pass
         winreg.CloseKey(key)
     except OSError:
         pass
-    return None
+    return state
+
+
+def _clear_auto_config_url():
+    """删除 AutoConfigURL 注册表项（如有）。"""
+    try:
+        import winreg
+        key_path = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
+        try:
+            winreg.DeleteValue(key, "AutoConfigURL")
+        except FileNotFoundError:
+            pass
+        winreg.CloseKey(key)
+    except Exception:
+        pass
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 安全恢复 — 确保无论进程如何退出都会关闭代理
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_proxy_was_enabled = False
-_original_proxy = None
+_proxy_state_saved = False
+_original_proxy_state: dict = {}
+_pac_file_path: Optional[str] = None
 
 
 def _cleanup_proxy():
-    """atexit 回调 — 确保系统代理被恢复。"""
-    global _proxy_was_enabled
-    if _proxy_was_enabled:
+    """atexit 回调 — 恢复原始系统代理状态。
+
+    完整恢复：ProxyEnable/ProxyServer/ProxyOverride + AutoConfigURL。
+    同时清理临时 PAC 文件。
+    """
+    global _proxy_state_saved, _original_proxy_state, _pac_file_path
+
+    # 删除临时 PAC 文件
+    if _pac_file_path:
         try:
-            _set_windows_proxy(enable=False)
-            _proxy_was_enabled = False
+            Path(_pac_file_path).unlink(missing_ok=True)
         except Exception:
             pass
+        _pac_file_path = None
+
+    if not _proxy_state_saved:
+        return
+
+    try:
+        import winreg
+        key_path = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0,
+                             winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE)
+        try:
+            # 恢复 AutoConfigURL
+            orig_acu = _original_proxy_state.get("auto_config_url", "")
+            if orig_acu:
+                winreg.SetValueEx(key, "AutoConfigURL", 0, winreg.REG_SZ, orig_acu)
+            else:
+                try:
+                    winreg.DeleteValue(key, "AutoConfigURL")
+                except FileNotFoundError:
+                    pass
+
+            # 恢复代理设置
+            if _original_proxy_state.get("enabled"):
+                winreg.SetValueEx(key, "ProxyEnable", 0, winreg.REG_DWORD, 1)
+                winreg.SetValueEx(key, "ProxyServer", 0, winreg.REG_SZ,
+                                  _original_proxy_state.get("server", ""))
+                winreg.SetValueEx(key, "ProxyOverride", 0, winreg.REG_SZ,
+                                  _original_proxy_state.get("override", "<local>"))
+            else:
+                winreg.SetValueEx(key, "ProxyEnable", 0, winreg.REG_DWORD, 0)
+        finally:
+            winreg.CloseKey(key)
+    except Exception:
+        pass
+    finally:
+        _proxy_state_saved = False
 
 
 atexit.register(_cleanup_proxy)
+
+
+# ── PAC 文件代理 ──────────────────────────────────────────────────────────────
+
+def _write_pac_file(port: int) -> str:
+    """写入 PAC 文件，仅将 wegame.com.cn 流量路由到本地代理。
+
+    Returns:
+        PAC 文件的绝对路径。
+    """
+    import tempfile
+    content = (
+        "function FindProxyForURL(url, host) {\n"
+        "    if (shExpMatch(host, \"*.wegame.com.cn\") "
+        "|| shExpMatch(host, \"wegame.com.cn\")) {\n"
+        f'        return "PROXY 127.0.0.1:{port}";\n'
+        "    }\n"
+        '    return "DIRECT";\n'
+        "}\n"
+    )
+    pac_dir = Path(tempfile.gettempdir()) / "lolhistory"
+    pac_dir.mkdir(parents=True, exist_ok=True)
+    pac_path = pac_dir / "proxy.pac"
+    pac_path.write_text(content, encoding="utf-8")
+    return str(pac_path.resolve())
+
+
+def _set_windows_proxy_pac(pac_path: str, enable: bool = True):
+    """设置/取消 Windows PAC 代理（AutoConfigURL）。"""
+    try:
+        import winreg
+    except ImportError:
+        return
+    key_path = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0,
+                             winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE)
+    except OSError:
+        return
+    try:
+        if enable:
+            file_url = "file:///" + pac_path.replace("\\", "/")
+            winreg.SetValueEx(key, "AutoConfigURL", 0, winreg.REG_SZ, file_url)
+            winreg.SetValueEx(key, "ProxyEnable", 0, winreg.REG_DWORD, 0)
+        else:
+            try:
+                winreg.DeleteValue(key, "AutoConfigURL")
+            except FileNotFoundError:
+                pass
+    finally:
+        winreg.CloseKey(key)
 
 
 # ── mitmproxy Addon ──────────────────────────────────────────────────────────
@@ -236,7 +360,7 @@ def run_capture(output: str = "cookies.json",
     Returns:
         提取到的 Cookie 字典（可能不完整）
     """
-    global _proxy_was_enabled, _original_proxy
+    global _proxy_state_saved, _original_proxy_state, _pac_file_path
 
     # 修复 Windows GBK 终端编码问题 + exe noconsole 模式兼容
     # exe 无控制台时 sys.stdout 为 None，mitmproxy termlog addon 需要 .isatty()
@@ -254,6 +378,7 @@ def run_capture(output: str = "cookies.json",
         listen_host="127.0.0.1",
         listen_port=port,
         ssl_insecure=True,
+        allow_hosts=[r"wegame\.com\.cn"],
     )
 
     loop = asyncio.new_event_loop()
@@ -286,9 +411,10 @@ def run_capture(output: str = "cookies.json",
             s.close()
 
     # ── 2. 设置系统代理 ──
-    _original_proxy = _get_windows_proxy()
+    _original_proxy_state = _save_proxy_state()
+    _proxy_state_saved = True
+    _clear_auto_config_url()        # 清除已有 PAC，避免干扰
     _set_windows_proxy(f"127.0.0.1:{port}", enable=True)
-    _proxy_was_enabled = True
 
     # ── 3. 提示用户登录 WeGame ──
     print("=" * 60)
