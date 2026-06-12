@@ -67,6 +67,20 @@ THEME = {
     "accent":   "#1a3a4a",
 }
 
+def _calc_global_progress(local_v: float, area_idx: int, total_areas: int) -> float:
+    """将大区局部进度映射为全局进度（0-100），保证只增不减。
+
+    映射规则:
+      - local_v ≤ 5（连接阶段）或 ≥ 90（报告生成阶段）: 全局共用，不映射
+      - 5 < local_v < 90: N 个大区等分 5-88 区间（88=大区工作完成）
+
+    公式: global = 5 + (area_idx * 83 + local_v - 5) / total_areas
+    """
+    if total_areas <= 1 or local_v <= 5 or local_v >= 90:
+        return local_v
+    return 5.0 + (area_idx * 83.0 + local_v - 5.0) / total_areas
+
+
 FONT_TITLE  = ("Microsoft YaHei", 18, "bold")
 FONT_H1     = ("Microsoft YaHei", 15, "bold")
 FONT_H2     = ("Microsoft YaHei", 13, "bold")
@@ -331,6 +345,7 @@ class LOLHistoryApp:
         self._db_path: str = ""
         self._total_games = 0
         self._total_wins = 0
+        self._progress_ctx = (0, 1)  # (area_idx, total_areas)
         self._log_lines: list[str] = []
         self._cert_status: str | None = None  # None=尚未检测, installed/exists/missing=已缓存
 
@@ -649,7 +664,7 @@ class LOLHistoryApp:
                 bg=THEME["card"], fg=THEME["text"], activebackground=THEME["hover"],
                 activeforeground=THEME["text"], relief="flat",
                 padx=16, pady=8, cursor="hand2", borderwidth=0,
-                command=lambda: self._show_page(1)
+                command=lambda: self._show_page(2)
             ).pack(side="left")
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -1671,10 +1686,10 @@ class LOLHistoryApp:
         self._log_text.configure(state="disabled")
         self._log_lines.append(text)
 
-    def _update_progress(self, value: float, text: str = ""):
-        """更新进度条。"""
+    def _update_progress(self, value: float):
+        """更新进度条（只显示百分比数字）。"""
         self._progress.configure(value=value)
-        self._progress_text.configure(text=text if text else f"{value:.0f}%")
+        self._progress_text.configure(text=f"{value:.0f}%")
 
     def _start_fetch(self):
         """开始拉取数据。"""
@@ -1703,7 +1718,7 @@ class LOLHistoryApp:
         self._log_text.configure(state="normal")
         self._log_text.delete("0.0", "end")
         self._log_text.configure(state="disabled")
-        self._update_progress(0, "准备连接...")
+        self._update_progress(0)
         self._fetch_title.configure(text="正在拉取对局数据...")
 
         # 后台线程执行
@@ -1765,13 +1780,15 @@ class LOLHistoryApp:
 
                 total_all_areas = 0
                 area_levels: dict[int, int] = {}
-                for area in areas:
+                total_areas = max(len(areas), 1)
+                for area_idx, area in enumerate(areas):
+                    self._msg_queue.put(("progress_ctx", area_idx, total_areas))
                     area_name = get_game_area_name(area)
                     self._msg_queue.put(("log", f"\n===== 大区: {area_name} =====\n"))
 
                     # ── 阶段 2: 召唤师信息 ───────────────────────────────────
                     self._msg_queue.put(("status", "summoner", f"⏳ [{area_name}] 获取召唤师信息..."))
-                    self._msg_queue.put(("progress", 8, ""))
+                    self._msg_queue.put(("progress", _calc_global_progress(8, area_idx, total_areas), ""))
 
                     summoner_profile = None
                     summoner_career = None
@@ -1800,7 +1817,7 @@ class LOLHistoryApp:
                             f"✅ 召唤师: {display}  |  Lv.{level}  |  {tier_name}  |  "
                             f"赛季: {season_wins}W/{season_total - season_wins}L ({wr:.1f}%)",
                             THEME["green"]))
-                        self._msg_queue.put(("progress", 12, ""))
+                        self._msg_queue.put(("progress", _calc_global_progress(12, area_idx, total_areas), ""))
 
                         # ── 全部模式：等级过滤 ─────────────────────────────
                         if (getattr(self, "_is_all_areas_mode", None)
@@ -1808,6 +1825,8 @@ class LOLHistoryApp:
                                 and level < 20):
                             self._msg_queue.put(("log",
                                 f"  [跳过] 等级 {level} < 20，跳过该大区\n"))
+                            self._msg_queue.put(("progress",
+                                _calc_global_progress(88, area_idx, total_areas), "跳过（等级<20）"))
                             continue
 
                         openid = summoner_profile.get("openid", "")
@@ -1827,13 +1846,13 @@ class LOLHistoryApp:
                                 THEME["green"]))
 
                             # 获取英雄熟练度
-                            self._msg_queue.put(("progress", 15, ""))
+                            self._msg_queue.put(("progress", _calc_global_progress(15, area_idx, total_areas), ""))
                             cr = client.get_champions(openid, area=area)
                             champions_data = parse_champions(cr)
                             self._msg_queue.put(("log", f"英雄熟练度: {len(champions_data)} 个英雄\n"))
 
                         # 获取赛季报告
-                        self._msg_queue.put(("progress", 18, ""))
+                        self._msg_queue.put(("progress", _calc_global_progress(18, area_idx, total_areas), ""))
                         br = client.get_battle_report(area=area)
                         battle_report_data = parse_battle_report(br)
                         bc = battle_report_data.get("battle_count", {})
@@ -1849,12 +1868,12 @@ class LOLHistoryApp:
                     if summoner_profile is None:
                         self._msg_queue.put(("log",
                             f"⚠ [{area_name}] 无法获取召唤师信息，该大区无账号，跳过\n"))
-                        self._msg_queue.put(("progress", 85, "跳过（无账号）"))
+                        self._msg_queue.put(("progress", _calc_global_progress(85, area_idx, total_areas), "跳过（无账号）"))
                         continue
 
                     # ── 阶段 3: 对局列表 ─────────────────────────────────────────
                     self._msg_queue.put(("status", "list", "⏳ 正在获取对局列表..."))
-                    self._msg_queue.put(("progress", 20, "获取对局列表中..."))
+                    self._msg_queue.put(("progress", _calc_global_progress(20, area_idx, total_areas), "获取对局列表中..."))
 
                     max_games = 501
 
@@ -1895,7 +1914,7 @@ class LOLHistoryApp:
                     self._msg_queue.put(("status", "list",
                         f"✅ 获取完成: {total} 场  |  {wins}W/{total - wins}L  |  {wr_all:.1f}%",
                         THEME["green"]))
-                    self._msg_queue.put(("progress", 40, f"已获取 {total} 场对局"))
+                    self._msg_queue.put(("progress", _calc_global_progress(40, area_idx, total_areas), f"已获取 {total} 场对局"))
 
                     if self._cancel_flag.is_set():
                         return
@@ -1915,7 +1934,7 @@ class LOLHistoryApp:
                             self._msg_queue.put(("log", f"✅ 辅助表已保存（{area_name} 无对局）\n"))
                         except Exception as e:
                             self._msg_queue.put(("log", f"⚠ 保存辅助表失败: {e}\n"))
-                        self._msg_queue.put(("progress", 85, "跳过（无对局）"))
+                        self._msg_queue.put(("progress", _calc_global_progress(85, area_idx, total_areas), "跳过（无对局）"))
                         continue
 
                     # ── 阶段 4: 对局详情 ─────────────────────────────────────────
@@ -1934,7 +1953,7 @@ class LOLHistoryApp:
                     # ═══════════════════════════════════════════════════════════════
                     self._msg_queue.put(("status", "detail",
                         "⏸ 对局详情: 已跳过（暂未用于分析报告）", THEME["text2"]))
-                    self._msg_queue.put(("progress", 75, "详情: 已跳过"))
+                    self._msg_queue.put(("progress", _calc_global_progress(75, area_idx, total_areas), "详情: 已跳过"))
                     detail_data = {}
 
                     # ── 恢复时解除注释（含 import fetch_battle_details） ────────
@@ -2009,7 +2028,7 @@ class LOLHistoryApp:
 
                     # ── 阶段 5: 导出 ────────────────────────────────────────────
                     self._msg_queue.put(("status", "export", "⏳ 正在导出数据..."))
-                    self._msg_queue.put(("progress", 80, "导出中..."))
+                    self._msg_queue.put(("progress", _calc_global_progress(80, area_idx, total_areas), "导出中..."))
 
                     parsed = [parse_battle_summary(b, area=area) for b in all_battles]
                     db_path = str(BASE_DIR / "wegame_matches.db")
@@ -2031,7 +2050,7 @@ class LOLHistoryApp:
 
                     self._msg_queue.put(("status", "export",
                         f"✅ 已导出到 {db_path}", THEME["green"]))
-                    self._msg_queue.put(("progress", 88, "数据已导出"))
+                    self._msg_queue.put(("progress", _calc_global_progress(88, area_idx, total_areas), "数据已导出"))
 
                 total_all_areas += 1
 
@@ -2247,18 +2266,21 @@ class LOLHistoryApp:
 
                 if msg_type == "log":
                     self._append_log(msg[1])
-                    # 解析进度信息，实时更新进度条
+                    # 解析进度信息，实时更新进度条（多区模式需映射到全局进度）
+                    area_idx, total_areas = self._progress_ctx
                     text = msg[1]
                     m = re.search(r'已获取[：:]\s*(\d+)\s*场对局', text)
                     if m:
                         count = int(m.group(1))
-                        pct = min(20 + (count / max(self._total_games or 1, 1)) * 20, 40)
-                        self._update_progress(pct, f"已获取 {count} 场对局")
+                        local_pct = min(20 + (count / max(self._total_games or 1, 1)) * 20, 40)
+                        pct = _calc_global_progress(local_pct, area_idx, total_areas)
+                        self._update_progress(pct)
                     m = re.search(r'获取详情:\s*(\d+)/(\d+)', text)
                     if m:
                         cur, total = int(m.group(1)), int(m.group(2))
-                        pct = min(45 + (cur / max(total, 1)) * 30, 75)
-                        self._update_progress(pct, f"详情: {cur}/{total}")
+                        local_pct = min(45 + (cur / max(total, 1)) * 30, 75)
+                        pct = _calc_global_progress(local_pct, area_idx, total_areas)
+                        self._update_progress(pct)
 
                 elif msg_type == "capture_log":
                     # 抓包实时日志 → 更新状态提示
@@ -2278,6 +2300,9 @@ class LOLHistoryApp:
                             text="🎉 已获取全部凭据！正在保存…",
                             fg=THEME["blue"])
 
+                elif msg_type == "progress_ctx":
+                    self._progress_ctx = (msg[1], msg[2])
+
                 elif msg_type == "status":
                     _, key, text, *rest = msg
                     color = rest[0] if rest else THEME["text2"]
@@ -2295,8 +2320,8 @@ class LOLHistoryApp:
                         pass  # 不显示额外状态
 
                 elif msg_type == "progress":
-                    _, value, text = msg
-                    self._update_progress(value, text)
+                    _, value = msg[:2]
+                    self._update_progress(value)
 
                 elif msg_type == "capture_done":
                     self._handle_capture_done(msg[1])
