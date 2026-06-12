@@ -87,9 +87,9 @@ QUEUE_TYPES = [
     (440, "Ranked Flex", 11),       # 组排（较少）
 ]
 
-# WeGame 段位 → 索引
+# WeGame 段位编码（所有赛季一致）：1=钻石, 2=铂金, 3=黄金, 4=白银, 5=青铜, 9=翡翠
+# 与 _data.py WEGAME_TIER_NAMES 对齐
 TIER_MAP = {0: 0, 1: 6, 2: 5, 3: 4, 4: 3, 5: 2, 6: 7, 7: 8, 8: 9}
-# WeGame 段位 (3=铂金, 4=黄金, 2=翡翠, 1=钻石)
 
 BASE_DATE = datetime(2026, 3, 15, 14, 0, 0)  # 数据起始日
 END_DATE = datetime(2026, 6, 8, 23, 0, 0)     # 数据结束日

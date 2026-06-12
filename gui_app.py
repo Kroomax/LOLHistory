@@ -257,8 +257,8 @@ def _query_overview_stats(db_path: str, selected_areas: list[int]) -> dict:
             result["career_total"] = str(row[0] or 0)
 
         # ⑥ 最高段位——主玩大区所有有场次的赛季中排名最高的段位
-        # WeGame 段位排序：8王 > 7宗 > 6大师 > 1钻 > 2翡 > 3铂 > 4金 > 5银
-        TIER_RANK = {8: 0, 7: 1, 6: 2, 1: 3, 2: 4, 3: 5, 4: 6, 5: 7}
+        # WeGame 段位排序：8王 > 7宗 > 6大师 > 1钻 > 9翡 > 2铂 > 3金 > 4银 > 5铜
+        TIER_RANK = {8: 0, 7: 1, 6: 2, 1: 3, 9: 4, 2: 5, 3: 6, 4: 7, 5: 8}
         best_tier = None
         best_rank = 999
         rows = conn.execute(
