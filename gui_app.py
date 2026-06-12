@@ -213,6 +213,7 @@ class LOLHistoryApp:
         self._total_games = 0
         self._total_wins = 0
         self._log_lines: list[str] = []
+        self._cert_status: str | None = None  # None=尚未检测, installed/exists/missing=已缓存
 
         # ── 尝试加载已保存的 Cookie ──────────────────────────────────────
         self._saved_cookies = _load_saved_cookies()
@@ -226,6 +227,10 @@ class LOLHistoryApp:
 
         # ── 启动消息轮询 ──────────────────────────────────────────────────
         self._poll_messages()
+
+        # ── 提前异步检测 HTTPS 证书状态 ──────────────────────────────────
+        # GUI 启动即触发，不等用户进入 Cookie 页，到达时已缓存
+        self._check_cert_status_async()
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ttk 样式
@@ -420,10 +425,16 @@ class LOLHistoryApp:
         self._update_step_indicator(stage)
         self._update_footer(stage)
 
-        # 切换到 Cookie 页面时自动检测根证书状态
+        # 切换到 Cookie 页面时检测根证书状态（已有缓存则直接显示）
         if stage == 1:
-            self.root.after(200, lambda: self._update_cert_status_ui(
-                self._check_cert_status()))
+            if self._cert_status is not None:
+                # 已有缓存 — 直接更新 UI（瞬间完成）
+                self._update_cert_status_ui(self._cert_status)
+            else:
+                # 后台检测尚未完成 — 显示等待状态（检测已在 init 阶段启动）
+                self._cert_status_icon.configure(text="🔄", fg=THEME["text3"])
+                self._cert_status_text.configure(
+                    text="正在检测 HTTPS 证书状态...", fg=THEME["text3"])
 
     # ═══════════════════════════════════════════════════════════════════════════
     # 底部导航按钮
@@ -887,8 +898,8 @@ class LOLHistoryApp:
 
     def _run_capture(self):
         """在后台线程启动一键抓包。"""
-        # 前置检查：根证书状态
-        cert_status = self._check_cert_status()
+        # 前置检查：根证书状态（优先使用缓存）
+        cert_status = self._get_cert_status()
         if cert_status == "missing":
             # 证书文件不存在，阻止抓包并提示用户先安装
             self._update_cert_status_ui(cert_status)
@@ -982,8 +993,8 @@ class LOLHistoryApp:
             fg=THEME["orange"])
         self._btn_capture.configure(state="normal", text="🔄 重新抓包")
         self._update_cookie_button()
-        # 刷新证书状态
-        self._update_cert_status_ui(self._check_cert_status())
+        # 刷新证书状态（使用缓存）
+        self._update_cert_status_ui(self._get_cert_status())
 
     def _handle_capture_error(self, msg: str):
         """处理抓包错误。"""
@@ -1015,6 +1026,21 @@ class LOLHistoryApp:
             return "missing"
         except Exception:
             return "missing"
+
+    def _check_cert_status_async(self):
+        """在后台线程异步检测根证书状态，结果通过消息队列回传。"""
+        def worker():
+            status = self._check_cert_status()
+            self._msg_queue.put(("cert_check_result", status))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _get_cert_status(self) -> str:
+        """获取证书状态：有缓存用缓存，无缓存则同步检测并缓存。"""
+        if self._cert_status is not None:
+            return self._cert_status
+        status = self._check_cert_status()
+        self._cert_status = status
+        return status
 
     def _update_cert_status_ui(self, status: str):
         """根据证书状态更新 UI 元素。"""
@@ -1151,15 +1177,16 @@ class LOLHistoryApp:
 
     def _handle_cert_done(self):
         """证书安装完成。"""
+        self._cert_status = "installed"  # 直接设置为已知值，无需重新检测
         self._update_cert_status_ui("installed")
         self._capture_status.configure(
             text="✅ HTTPS 证书已安装，可以开始抓包了！", fg=THEME["green"])
 
     def _handle_cert_error(self, msg: str):
         """证书操作失败。"""
-        # 重新检测当前状态
-        status = self._check_cert_status()
-        self._update_cert_status_ui(status)
+        # 无效化缓存，异步重新检测
+        self._cert_status = None
+        self._check_cert_status_async()
         friendly = self._friendly_error(msg)
         self._capture_status.configure(
             text=f"❌ {friendly}", fg=THEME["red"])
@@ -2092,6 +2119,11 @@ class LOLHistoryApp:
 
                 elif msg_type == "capture_error":
                     self._handle_capture_error(msg[1])
+
+                elif msg_type == "cert_check_result":
+                    # 后台线程的证书检测结果 — 写入缓存并更新 UI
+                    self._cert_status = msg[1]
+                    self._update_cert_status_ui(msg[1])
 
                 elif msg_type == "cert_status":
                     # 证书操作进度更新
