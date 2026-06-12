@@ -148,16 +148,24 @@ class OutputCapture(io.TextIOBase):
 
 
 class QueueStringIO(io.StringIO):
-    """StringIO 子类，每次 write 同时推送到消息队列，实现抓包实时日志显示。"""
+    """StringIO 子类，缓冲换行后批量推送队列，减少 tkinter 主循环压力。"""
 
     def __init__(self, q: queue.Queue):
         super().__init__()
         self._q = q
+        self._buf = ""
 
     def write(self, s: str) -> int:
-        if s and s.strip():
-            self._q.put(("capture_log", s))
+        if s:
+            self._buf += s
+            if "\n" in self._buf:
+                self.flush()
         return super().write(s)
+
+    def flush(self):
+        if self._buf.strip():
+            self._q.put(("capture_log", self._buf))
+        self._buf = ""
 
     def isatty(self) -> bool:
         return False
@@ -231,6 +239,10 @@ class LOLHistoryApp:
         # ── 提前异步检测 HTTPS 证书状态 ──────────────────────────────────
         # GUI 启动即触发，不等用户进入 Cookie 页，到达时已缓存
         self._check_cert_status_async()
+
+        # ── 后台预载抓包模块（消除 PyInstaller 冷启动冻结） ─────────────
+        # 用户浏览欢迎页时 mitmproxy 已在后台完成导入
+        self._preimport_capture_module_async()
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ttk 样式
@@ -919,6 +931,12 @@ class LOLHistoryApp:
 
         def worker():
             try:
+                # 立即发送进度消息，让用户看到活动（import 可能耗时 5 秒）
+                self._msg_queue.put((
+                    "capture_log",
+                    "正在启动代理引擎（首次加载约需 5 秒）...\n"
+                ))
+
                 # 使用 QueueStringIO 实现实时日志输出
                 old_stdout = sys.stdout
                 old_stderr = sys.stderr
@@ -1017,7 +1035,6 @@ class LOLHistoryApp:
                 result = subprocess.run(
                     ["certutil", "-user", "-store", "Root"],
                     capture_output=True, text=True,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
                 )
                 if "mitmproxy" in result.stdout:
                     return "installed"
@@ -1033,6 +1050,15 @@ class LOLHistoryApp:
         def worker():
             status = self._check_cert_status()
             self._msg_queue.put(("cert_check_result", status))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _preimport_capture_module_async(self):
+        """后台预载抓包模块，消除点击「开始抓包」时的 PyInstaller 冷启动延迟。"""
+        def worker():
+            try:
+                import lolhistory._capture_cookies  # noqa: F401
+            except Exception:
+                pass  # 预加载失败不影响主流程，实际启动时还会再试
         threading.Thread(target=worker, daemon=True).start()
 
     def _get_cert_status(self) -> str:
@@ -2054,9 +2080,13 @@ class LOLHistoryApp:
 
     def _poll_messages(self):
         """定时检查消息队列，在主线程更新 GUI。"""
+        processed = 0
         try:
             while True:
                 msg = self._msg_queue.get_nowait()
+                processed += 1
+                if processed >= 200:
+                    break
                 msg_type = msg[0]
 
                 if msg_type == "log":
@@ -2151,7 +2181,7 @@ class LOLHistoryApp:
         except queue.Empty:
             pass
 
-        self.root.after(100, self._poll_messages)
+        self.root.after(30, self._poll_messages)
 
     def _setup_close_handler(self):
         """窗口关闭时的清理。"""
