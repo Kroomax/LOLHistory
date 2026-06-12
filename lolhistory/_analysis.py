@@ -296,6 +296,301 @@ def _load_career_overview(db_path: str, area_ids: list[int] | None = None) -> di
     return dict(row) if row else None
 
 
+def _load_summoner_profiles_all(db_path: str, area_ids: list[int] | None = None) -> list[dict]:
+    """从 SQLite 加载 summoner_profile 表数据（所有匹配大区的行，用于全区合并）。"""
+    if not Path(db_path).exists():
+        return []
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT COUNT(*) FROM summoner_profile")
+        if cur.fetchone()[0] == 0:
+            conn.close()
+            return []
+    except sqlite3.OperationalError:
+        conn.close()
+        return []
+    if area_ids:
+        placeholders = ", ".join("?" * len(area_ids))
+        cur.execute(
+            f"SELECT * FROM summoner_profile WHERE area IN ({placeholders})",
+            area_ids,
+        )
+    else:
+        cur.execute("SELECT * FROM summoner_profile")
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def _load_career_overviews_all(db_path: str, area_ids: list[int] | None = None) -> list[dict]:
+    """从 SQLite 加载 career_overview 表数据（所有匹配大区的行，用于全区合并）。"""
+    if not Path(db_path).exists():
+        return []
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT COUNT(*) FROM career_overview")
+        if cur.fetchone()[0] == 0:
+            conn.close()
+            return []
+    except sqlite3.OperationalError:
+        conn.close()
+        return []
+    if area_ids:
+        placeholders = ", ".join("?" * len(area_ids))
+        cur.execute(
+            f"SELECT * FROM career_overview WHERE area IN ({placeholders})",
+            area_ids,
+        )
+    else:
+        cur.execute("SELECT * FROM career_overview")
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+# ── 全区数据合并函数 ─────────────────────────────────────────────────────────
+
+def _merge_champion_mastery(rows: list[dict]) -> list[dict]:
+    """合并多个大区的英雄熟练度数据。
+
+    按 champion_id 分组：场次求和、胜率重新计算、熟练度取最大、分路合并去重。
+    """
+    if not rows:
+        return []
+
+    merged: dict[int, dict] = {}
+    for c in rows:
+        cid = c.get("champion_id", 0)
+        if not cid:
+            continue
+        if cid not in merged:
+            merged[cid] = dict(c)
+            continue
+        m = merged[cid]
+        m["total_games"] = (m.get("total_games", 0) or 0) + (c.get("total_games", 0) or 0)
+        m["wins"] = (m.get("wins", 0) or 0) + (c.get("wins", 0) or 0)
+        m["mastery_exp"] = max(m.get("mastery_exp", 0) or 0, c.get("mastery_exp", 0) or 0)
+        m["expire_day"] = max(m.get("expire_day", 0) or 0, c.get("expire_day", 0) or 0)
+        if not m.get("instance_id") and c.get("instance_id"):
+            m["instance_id"] = c["instance_id"]
+        m["sid_total"] = (m.get("sid_total", 0) or 0) + (c.get("sid_total", 0) or 0)
+        m["sid_wins"] = (m.get("sid_wins", 0) or 0) + (c.get("sid_wins", 0) or 0)
+        m["sid_exp"] = (m.get("sid_exp", 0) or 0) + (c.get("sid_exp", 0) or 0)
+        # 合并常用分路 JSON
+        lanes_merged = []
+        try:
+            lanes_merged.extend(json.loads(m.get("lanes_json", "[]") or "[]"))
+        except (json.JSONDecodeError, TypeError):
+            pass
+        try:
+            lanes_merged.extend(json.loads(c.get("lanes_json", "[]") or "[]"))
+        except (json.JSONDecodeError, TypeError):
+            pass
+        if lanes_merged:
+            seen = set()
+            unique = []
+            for lane in lanes_merged:
+                if lane not in seen:
+                    seen.add(lane)
+                    unique.append(lane)
+            m["lanes_json"] = json.dumps(unique, ensure_ascii=False)
+        # area 设为 0 表示全区合并
+        m["area"] = 0
+
+    # 重新计算胜率，按 total_games 降序排列
+    result = []
+    for m in merged.values():
+        total = max(m.get("total_games", 0) or 0, 1)
+        m["win_rate"] = round((m.get("wins", 0) or 0) / total * 100, 1)
+        result.append(m)
+
+    result.sort(key=lambda x: x.get("total_games", 0) or 0, reverse=True)
+    return result
+
+
+def _merge_season_history(rows: list[dict]) -> list[dict]:
+    """合并多个大区的赛季历史数据。
+
+    按 sid 分组：场次求和、段位取场次最多的大区。
+    """
+    if not rows:
+        return []
+
+    # 第一遍：分组累加场次 + 追踪段位来源
+    merged: dict[int, dict] = {}
+    # sid → (max_solo_total, best_row_for_solo)
+    best_solo: dict[int, tuple[int, dict]] = {}
+    # sid → (max_team_total, best_row_for_team)
+    best_team: dict[int, tuple[int, dict]] = {}
+
+    for s in rows:
+        sid = s.get("sid", 0)
+        if not sid:
+            continue
+
+        # 追踪单双排段位最佳来源
+        solo_total = s.get("total_games", 0) or 0
+        if sid not in best_solo or solo_total > best_solo[sid][0]:
+            best_solo[sid] = (solo_total, s)
+
+        # 追踪组排段位最佳来源
+        team_total = s.get("team_total", 0) or 0
+        if sid not in best_team or team_total > best_team[sid][0]:
+            best_team[sid] = (team_total, s)
+
+        if sid not in merged:
+            merged[sid] = dict(s)
+            continue
+
+        m = merged[sid]
+        m["total_games"] = (m.get("total_games", 0) or 0) + solo_total
+        m["wins"] = (m.get("wins", 0) or 0) + (s.get("wins", 0) or 0)
+        m["losses"] = (m.get("losses", 0) or 0) + (s.get("losses", 0) or 0)
+        m["team_total"] = (m.get("team_total", 0) or 0) + team_total
+        m["team_wins"] = (m.get("team_wins", 0) or 0) + (s.get("team_wins", 0) or 0)
+        m["team_losses"] = (m.get("team_losses", 0) or 0) + (s.get("team_losses", 0) or 0)
+
+    # 回填段位（取场次最多的大区）
+    for sid, m in merged.items():
+        if sid in best_solo:
+            best = best_solo[sid][1]
+            m["tier"] = best.get("tier", 255)
+            m["win_point"] = best.get("win_point", 0)
+            m["queue"] = best.get("queue", 0)
+        if sid in best_team:
+            best = best_team[sid][1]
+            m["team_tier"] = best.get("team_tier", 255)
+            m["team_win_point"] = best.get("team_win_point", 0)
+            m["team_queue"] = best.get("team_queue", 0)
+        m["area"] = 0
+
+    return sorted(merged.values(), key=lambda x: x.get("sid", 0))
+
+
+def _merge_summoner_profiles(profiles: list[dict]) -> dict | None:
+    """合并多个大区的召唤师资料。
+
+    身份标识取场次最多的大区、累计字段求和、极值字段取最大/最小。
+    """
+    if not profiles:
+        return None
+
+    # 选取代表大区（season_total 最大）
+    representative = max(profiles, key=lambda p: p.get("season_total", 0) or 0)
+
+    merged: dict = {}
+
+    # ── 身份标识（取代表大区） ──
+    for key in ("puin", "summoner_id", "summoner_name", "name_tag",
+                "icon_id", "openid"):
+        merged[key] = representative.get(key)
+
+    # ── 等级/经验（取最大值） ──
+    merged["level"] = max((p.get("level", 0) or 0) for p in profiles)
+    merged["experience"] = max((p.get("experience", 0) or 0) for p in profiles)
+
+    # ── 荣誉（求和） ──
+    merged["praise"] = sum(p.get("praise", 0) or 0 for p in profiles)
+    merged["discredit"] = sum(p.get("discredit", 0) or 0 for p in profiles)
+
+    # ── 布尔 OR ──
+    merged["top_of_canyon"] = 1 if any(p.get("top_of_canyon", 0) for p in profiles) else 0
+
+    # ── 赛季快照（取代表大区） ──
+    for key in ("season_sid", "season_tier", "season_win_point", "season_queue"):
+        merged[key] = representative.get(key)
+
+    # ── 赛季累计（求和） ──
+    for key in ("season_total", "season_wins", "season_losses"):
+        merged[key] = sum(p.get(key, 0) or 0 for p in profiles)
+
+    # ── 近30天（求和） ──
+    for key in ("kill_30days", "death_30days", "assist_30days",
+                "recent_win_times", "recent_play_times"):
+        merged[key] = sum(p.get(key, 0) or 0 for p in profiles)
+
+    # ── 近30天 KDA（重新计算） ──
+    k = merged.get("kill_30days", 0) or 0
+    d = merged.get("death_30days", 0) or 0
+    a = merged.get("assist_30days", 0) or 0
+    merged["recent_kda_score"] = round((k + a) / max(d, 1), 2)
+
+    # ── 近30天最新对局（取时间最新的） ──
+    latest = max(profiles, key=lambda p: p.get("last_game_time", "") or "")
+    merged["last_game_id"] = latest.get("last_game_id", "")
+    merged["last_game_time"] = latest.get("last_game_time", "")
+
+    # ── 常用英雄/位置（JSON 合并去重） ──
+    champs_merged: list = []
+    positions_merged: list = []
+    for p in profiles:
+        try:
+            champs_merged.extend(json.loads(p.get("common_champions", "[]") or "[]"))
+        except (json.JSONDecodeError, TypeError):
+            pass
+        try:
+            positions_merged.extend(json.loads(p.get("common_positions", "[]") or "[]"))
+        except (json.JSONDecodeError, TypeError):
+            pass
+    merged["common_champions"] = json.dumps(champs_merged, ensure_ascii=False)
+    merged["common_positions"] = json.dumps(positions_merged, ensure_ascii=False)
+
+    # ── 生涯累计（求和） ──
+    for key in ("total_mvp_times", "total_svp_times", "total_god_likes",
+                "total_penta_kills", "total_quadra_kills", "total_triple_kills",
+                "total_kills", "total_assists", "total_ward_placed"):
+        merged[key] = sum(p.get(key, 0) or 0 for p in profiles)
+
+    # ── 生涯极值（取最大值） ──
+    for key in ("max_consecutive_wins", "highest_game_score",
+                "most_kills_num", "most_assists_num", "most_spree_kills_num",
+                "most_damage_num", "most_damage_taken_num", "most_gold_earned_num",
+                "most_minions_kill_num", "most_turrets_kill_num", "longest_game_num"):
+        merged[key] = max((p.get(key, 0) or 0) for p in profiles)
+
+    # ── 最短对局（排除 0 后取最小值） ──
+    shortest_vals = [p.get("shortest_game_num", 0) or 0 for p in profiles if (p.get("shortest_game_num", 0) or 0) > 0]
+    merged["shortest_game_num"] = min(shortest_vals) if shortest_vals else 0
+
+    # ── 元数据 ──
+    merged["area"] = 0
+    merged["last_fetch_time"] = latest.get("last_fetch_time", "")
+
+    return merged
+
+
+def _merge_career_overviews(overviews: list[dict]) -> dict | None:
+    """合并多个大区的生涯总览数据。所有数值字段直接求和。"""
+    if not overviews:
+        return None
+
+    sum_keys = (
+        "total_match_games", "total_match_wins", "total_match_losses",
+        "total_aram_games", "total_aram_wins", "total_aram_losses",
+        "total_rank_games", "total_rank_wins", "total_rank_losses",
+        "total_teamrank_games", "total_teamrank_wins", "total_teamrank_losses",
+        "total_all_games", "total_all_wins", "total_all_losses",
+        "total_ai_games", "total_ai_wins", "total_clash_games",
+    )
+
+    merged: dict = {"area": 0}
+    for ov in overviews:
+        for key in sum_keys:
+            merged[key] = merged.get(key, 0) + (ov.get(key, 0) or 0)
+
+    # 保留其他非数值字段（如 puin）从第一个复制
+    first = overviews[0]
+    for key in ("puin", "last_fetch_time"):
+        if key in first:
+            merged[key] = first[key]
+
+    return merged
+
+
 def _filter_ranked(matches: list[dict]) -> list[dict]:
     """仅保留排位单双排 (queue_id=420)。"""
     return [m for m in matches if m.get("game_queue_id") == 420]
@@ -3875,8 +4170,11 @@ def _build_html(results: dict) -> str:
 </body>
 </html>"""
 
-def _build_html_multi(area_data: dict[int, dict]) -> str:
-    """生成多区报告 HTML：使用 per-area chart init 函数 + JS 切换器。"""
+def _build_html_multi(area_data: dict[int, dict], combined_first: bool = False) -> str:
+    """生成多区报告 HTML：使用 per-area chart init 函数 + JS 切换器。
+
+    当 combined_first=True 时，area_data 的第一个 key 应为 0（全区数据分析），
+    将被设为首个选项和默认选中。"""
     from ._data import get_game_area_name
 
     area_ids = list(area_data.keys())
@@ -4216,8 +4514,34 @@ def generate_report(
             dated_output.write_text(html, encoding="utf-8")
             return str(dated_output.resolve())
 
-        # 文件名取第一个区名，多于1个区加"等N区"
-        area_names = [d["name"].split("（")[0] for d in area_data.values()]
+        # ── 全区数据分析（仅当>=2个大区有数据时） ──
+        if len(area_data) > 1:
+            print(f"  计算全区数据分析（合并 {len(area_data)} 个大区）...")
+            combined_matches = _load_matches(db_path, area_ids=area_ids)
+            combined_cm_raw = _load_champion_mastery(db_path, area_ids=area_ids)
+            combined_sh_raw = _load_season_history(db_path, area_ids=area_ids)
+            combined_profiles = _load_summoner_profiles_all(db_path, area_ids=area_ids)
+            combined_overviews = _load_career_overviews_all(db_path, area_ids=area_ids)
+
+            combined_cm = _merge_champion_mastery(combined_cm_raw)
+            combined_sh = _merge_season_history(combined_sh_raw)
+            combined_sp = _merge_summoner_profiles(combined_profiles)
+            combined_co = _merge_career_overviews(combined_overviews)
+
+            combined_ov = _analyze_overview(combined_matches, combined_sp)
+            combined_results = _compute_all_results(
+                combined_matches, combined_cm, combined_sh,
+                combined_sp, combined_co, combined_ov, session_gap_hours,
+            )
+
+            # 用 OrderedDict 确保全区排第一
+            area_data_all = {0: {"name": "全区数据分析", "results": combined_results}}
+            area_data_all.update(area_data)
+            area_data = area_data_all
+
+        # 文件名取第一个区名，多于1个区加"等N区"（排除全区 key=0）
+        real_area_data = {k: v for k, v in area_data.items() if k != 0} if 0 in area_data else area_data
+        area_names = [d["name"].split("（")[0] for d in real_area_data.values()]
         first_name = area_names[0]
         if len(area_names) > 1:
             short_names = f"{first_name}等{len(area_names)}区"
@@ -4225,7 +4549,8 @@ def generate_report(
             short_names = first_name
         dated_output = out_path.with_name(f"{stem}_{short_names}_{date_suffix}{ext}")
 
-        html = _build_html_multi(area_data)
+        combined_first = 0 in area_data
+        html = _build_html_multi(area_data, combined_first=combined_first)
         dated_output.write_text(html, encoding="utf-8")
         return str(dated_output.resolve())
 
