@@ -1738,7 +1738,8 @@ class LOLHistoryApp:
             try:
                 from lolhistory._wegame import (
                     WegameApiClient, WegameApiError,
-                    fetch_battle_list, fetch_battle_details,
+                    fetch_battle_list,
+                    # fetch_battle_details,  # 暂未使用 — 恢复详情获取时解注
                     parse_battle_summary, parse_summoner_info,
                     parse_player_recent_stat, parse_champions,
                     parse_battle_report,
@@ -1910,75 +1911,93 @@ class LOLHistoryApp:
                         continue
 
                     # ── 阶段 4: 对局详情 ─────────────────────────────────────────
-                    self._msg_queue.put(("status", "detail", "⏳ 正在获取对局详情..."))
+                    # ═══════════════════════════════════════════════════════════════
+                    # [暂跳过] 对局详情（GetBattleDetail）获取
+                    #
+                    # 原因: 当前分析报告（_analysis.py）仅使用 match_summary 表中的
+                    #       基础对局数据（KDA/胜负/位置/时长/阵容等），match_detail
+                    #       中的装备/符文/ban 等深度数据尚未被任何分析模块消费。
+                    #       拉取详情每局需额外 1 次 API 请求，会显著增加总耗时。
+                    #
+                    # 恢复方法: 解除下方三行注释的代码，并注释掉本段上方的跳过逻辑。
+                    #   1. 在 _poll_messages() 中恢复 detail 状态更新（搜索 "获取详情"）
+                    #   2. 在 _fetch_worker 顶部的 import 中添加 fetch_battle_details
+                    #   3. 确保 export_sqlite 的 detail_data 参数传回真实数据
+                    # ═══════════════════════════════════════════════════════════════
+                    self._msg_queue.put(("status", "detail",
+                        "⏸ 对局详情: 已跳过（暂未用于分析报告）", THEME["text2"]))
+                    self._msg_queue.put(("progress", 75, "详情: 已跳过"))
                     detail_data = {}
-                    game_ids = [str(b.get("game_id", "")) for b in all_battles
-                               if b.get("game_id")]
-                    game_ids_set = set(game_ids)
 
-                    # 查询已有详情 + 回填缺失详情（与 CLI 保持一致）
-                    existing_detail_ids: set[str] = set()
-                    backfill_ids: set[str] = set()
-                    db_detail_path = str(BASE_DIR / "wegame_matches.db")
-                    if Path(db_detail_path).exists():
-                        try:
-                            import sqlite3 as _sqlite3
-                            conn = _sqlite3.connect(db_detail_path)
-                            rows = conn.execute(
-                                "SELECT DISTINCT game_id FROM match_detail WHERE area = ?",
-                                (area,)
-                            ).fetchall()
-                            existing_detail_ids = {r[0] for r in rows}
-                            # 回填：match_summary 有但 match_detail 缺失的对局
-                            rows2 = conn.execute("""
-                                SELECT DISTINCT ms.game_id FROM match_summary ms
-                                WHERE ms.area = ?
-                                AND ms.game_id NOT IN (
-                                    SELECT DISTINCT game_id FROM match_detail WHERE area = ?
-                                )
-                            """, (area, area)).fetchall()
-                            backfill_ids = {r[0] for r in rows2}
-                            conn.close()
-                        except Exception:
-                            pass
-
-                    # 合并：当前获取的对局在前，历史缺失详情的对局在后
-                    new_backfill = backfill_ids - game_ids_set - existing_detail_ids
-                    if new_backfill:
-                        self._msg_queue.put(
-                            ("log", f"发现 {len(new_backfill)} 场历史对局缺少详情，将一并补获取\n"))
-                    all_detail_ids = game_ids + sorted(new_backfill)
-
-                    new_game_ids = [gid for gid in all_detail_ids
-                                    if gid not in existing_detail_ids]
-                    skipped = len(all_detail_ids) - len(new_game_ids)
-                    if skipped:
-                        self._msg_queue.put(
-                            ("log", f"详情: {skipped} 场已有，跳过；需获取 {len(new_game_ids)} 场\n"))
-
-                    self._msg_queue.put(("progress", 45,
-                        f"正在获取详情: 0/{len(new_game_ids)}"))
-
-                    if new_game_ids:
-                        try:
-                            detail_data = fetch_battle_details(
-                                client, new_game_ids, area=area, delay_ms=delay)
-                        except Exception as e:
-                            self._msg_queue.put(
-                                ("error", f"获取对局详情失败: {e}\n{traceback.format_exc()}"))
-                            return
-
-                        detail_ok = sum(1 for v in detail_data.values()
-                                       if "error" not in v)
-                        self._msg_queue.put(("status", "detail",
-                            f"✅ 详情: {detail_ok}/{len(new_game_ids)} 场",
-                            THEME["green"] if detail_ok == len(new_game_ids) else THEME["orange"]))
-                        self._msg_queue.put(("progress", 75,
-                            f"详情: {detail_ok}/{len(new_game_ids)} 场"))
-                    else:
-                        self._msg_queue.put(("status", "detail",
-                            "✅ 详情: 全部已有，无需获取", THEME["green"]))
-                        self._msg_queue.put(("progress", 75, "详情: 全部已有"))
+                    # ── 恢复时解除注释（含 import fetch_battle_details） ────────
+                    # self._msg_queue.put(("status", "detail", "⏳ 正在获取对局详情..."))
+                    # game_ids = [str(b.get("game_id", "")) for b in all_battles
+                    #            if b.get("game_id")]
+                    # game_ids_set = set(game_ids)
+                    #
+                    # # 查询已有详情 + 回填缺失详情（与 CLI 保持一致）
+                    # existing_detail_ids: set[str] = set()
+                    # backfill_ids: set[str] = set()
+                    # db_detail_path = str(BASE_DIR / "wegame_matches.db")
+                    # if Path(db_detail_path).exists():
+                    #     try:
+                    #         import sqlite3 as _sqlite3
+                    #         conn = _sqlite3.connect(db_detail_path)
+                    #         rows = conn.execute(
+                    #             "SELECT DISTINCT game_id FROM match_detail WHERE area = ?",
+                    #             (area,)
+                    #         ).fetchall()
+                    #         existing_detail_ids = {r[0] for r in rows}
+                    #         # 回填：match_summary 有但 match_detail 缺失的对局
+                    #         rows2 = conn.execute("""
+                    #             SELECT DISTINCT ms.game_id FROM match_summary ms
+                    #             WHERE ms.area = ?
+                    #             AND ms.game_id NOT IN (
+                    #                 SELECT DISTINCT game_id FROM match_detail WHERE area = ?
+                    #             )
+                    #         """, (area, area)).fetchall()
+                    #         backfill_ids = {r[0] for r in rows2}
+                    #         conn.close()
+                    #     except Exception:
+                    #         pass
+                    #
+                    # # 合并：当前获取的对局在前，历史缺失详情的对局在后
+                    # new_backfill = backfill_ids - game_ids_set - existing_detail_ids
+                    # if new_backfill:
+                    #     self._msg_queue.put(
+                    #         ("log", f"发现 {len(new_backfill)} 场历史对局缺少详情，将一并补获取\n"))
+                    # all_detail_ids = game_ids + sorted(new_backfill)
+                    #
+                    # new_game_ids = [gid for gid in all_detail_ids
+                    #                 if gid not in existing_detail_ids]
+                    # skipped = len(all_detail_ids) - len(new_game_ids)
+                    # if skipped:
+                    #     self._msg_queue.put(
+                    #         ("log", f"详情: {skipped} 场已有，跳过；需获取 {len(new_game_ids)} 场\n"))
+                    #
+                    # self._msg_queue.put(("progress", 45,
+                    #     f"正在获取详情: 0/{len(new_game_ids)}"))
+                    #
+                    # if new_game_ids:
+                    #     try:
+                    #         detail_data = fetch_battle_details(
+                    #             client, new_game_ids, area=area, delay_ms=delay)
+                    #     except Exception as e:
+                    #         self._msg_queue.put(
+                    #             ("error", f"获取对局详情失败: {e}\n{traceback.format_exc()}"))
+                    #         return
+                    #
+                    #     detail_ok = sum(1 for v in detail_data.values()
+                    #                    if "error" not in v)
+                    #     self._msg_queue.put(("status", "detail",
+                    #         f"✅ 详情: {detail_ok}/{len(new_game_ids)} 场",
+                    #         THEME["green"] if detail_ok == len(new_game_ids) else THEME["orange"]))
+                    #     self._msg_queue.put(("progress", 75,
+                    #         f"详情: {detail_ok}/{len(new_game_ids)} 场"))
+                    # else:
+                    #     self._msg_queue.put(("status", "detail",
+                    #         "✅ 详情: 全部已有，无需获取", THEME["green"]))
+                    #     self._msg_queue.put(("progress", 75, "详情: 全部已有"))
 
                     # ── 阶段 5: 导出 ────────────────────────────────────────────
                     self._msg_queue.put(("status", "export", "⏳ 正在导出数据..."))
