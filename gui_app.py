@@ -1084,7 +1084,6 @@ class LOLHistoryApp:
         "Connection refused": ("无法连接服务器", "请检查网络连接"),
         "ConnectionError": ("网络连接失败", "请检查网络是否正常"),
         "timeout": ("请求超时", "服务器响应慢，请稍后重试"),
-        "mitmproxy": ("抓包组件异常", "请重新启动程序"),
         "certificate": ("HTTPS 证书问题", "请尝试重新安装证书"),
     }
 
@@ -1146,6 +1145,7 @@ class LOLHistoryApp:
                 result = subprocess.run(
                     ["certutil", "-user", "-store", "Root"],
                     capture_output=True, text=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
                 )
                 if "mitmproxy" in result.stdout:
                     return "installed"
