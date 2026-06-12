@@ -1081,6 +1081,7 @@ class LOLHistoryApp:
     _ERROR_MAP = {
         "8025009": ("登录凭据已过期", "请重新获取凭据"),
         "8000002": ("请求过于频繁", "请稍等 30 秒后重试"),
+        "8000004": ("该大区无账号数据", "已自动跳过"),
         "Connection refused": ("无法连接服务器", "请检查网络连接"),
         "ConnectionError": ("网络连接失败", "请检查网络是否正常"),
         "timeout": ("请求超时", "服务器响应慢，请稍后重试"),
@@ -1843,6 +1844,13 @@ class LOLHistoryApp:
                         self._msg_queue.put(("log", f"⚠ 召唤师/生涯信息获取失败: {e}\n"))
                     except Exception as e:
                         self._msg_queue.put(("log", f"⚠ 意外错误: {e}\n"))
+
+                    # ── 跳过无账号大区 ──────────────────────────────────────────────
+                    if summoner_profile is None:
+                        self._msg_queue.put(("log",
+                            f"⚠ [{area_name}] 无法获取召唤师信息，该大区无账号，跳过\n"))
+                        self._msg_queue.put(("progress", 85, "跳过（无账号）"))
+                        continue
 
                     # ── 阶段 3: 对局列表 ─────────────────────────────────────────
                     self._msg_queue.put(("status", "list", "⏳ 正在获取对局列表..."))
