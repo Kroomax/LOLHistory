@@ -76,6 +76,55 @@ WEGAME_TIER_NAMES: dict[int, str] = {
     8: "最强王者",
 }
 
+# ── 赛季 SID → 中文名称映射 ──────────────────────────────────────────────
+# 来源: WeGame API GetBattleReport season_list 中的 sid 字段
+# S2~S8: 每赛季 1 个 SID；S9~S12: 每赛季「季前赛 + 赛季」共 2 SID；
+# S13: 季前赛 + 第一/第二赛段 共 3 SID；S14 起: 每赛季 3 个赛段
+
+SEASON_NAMES: dict[int, str] = {
+    1: "S2赛季",
+    2: "S3赛季",
+    3: "S4赛季",
+    4: "S5赛季",
+    5: "S6赛季",
+    6: "S7赛季",
+    7: "S8赛季",
+    8: "S9季前赛",
+    9: "S9赛季",
+    10: "S10季前赛",
+    11: "S10赛季",
+    12: "S11季前赛",
+    13: "S11赛季",
+    14: "S12季前赛",
+    15: "S12赛季",
+    16: "S13季前赛",
+    17: "S13第一赛段",
+    18: "S13第二赛段",
+    19: "S14第一赛段",
+    20: "S14第二赛段",
+    21: "S14第三赛段",
+    22: "S15第一赛段",
+    23: "S15第二赛段",
+    24: "S15第三赛段",
+    25: "S16第一赛段",
+    26: "S16第二赛段",
+    27: "S16第三赛段",
+}
+# 从 S14 起每赛季 3 个赛段，规律延续至 sid=99
+_SPLIT_NAMES = ("第一赛段", "第二赛段", "第三赛段")
+_season_base = 14
+_sid_base = 19
+for _sid in range(28, 100):
+    _sn = _season_base + (_sid - _sid_base) // 3
+    _si = (_sid - _sid_base) % 3
+    SEASON_NAMES[_sid] = f"S{_sn}{_SPLIT_NAMES[_si]}"
+
+
+def get_season_name(sid: int) -> str:
+    """根据赛季 SID 返回中文赛季名称。"""
+    return SEASON_NAMES.get(sid, f"S{sid}")
+
+
 # ── 英雄 ID → 显示名称（从 WeGame 官方配置文件提取，175 个标准英雄 + 20 个末日人机变体） ──
 # 来源: wegame-api-export/英雄配置文件LOLChampion.*.js
 # 格式: "Ename 中文名"，英雄 ID 与 Riot 官方 champion-summary.json 对齐

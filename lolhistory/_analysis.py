@@ -12,7 +12,7 @@ from datetime import datetime
 from collections import defaultdict, Counter
 from pathlib import Path
 
-from ._data import CHAMPION_DISPLAY, WEGAME_TIER_NAMES
+from ._data import CHAMPION_DISPLAY, WEGAME_TIER_NAMES, get_season_name
 
 # ── 常量 ────────────────────────────────────────────────────────────────────
 
@@ -2426,7 +2426,7 @@ def _analyze_season_stats(season_history: list[dict]) -> dict:
         sid = s.get("sid", 0)
         if not sid:
             continue
-        labels.append(f"S{sid}")
+        labels.append(get_season_name(sid))
         total = (s.get("total_games", 0) or 0) + (s.get("team_total", 0) or 0)
         wins = (s.get("wins", 0) or 0) + (s.get("team_wins", 0) or 0)
         games_list.append(total)
@@ -2462,7 +2462,7 @@ def _analyze_season_tier_timeline(season_history: list[dict]) -> dict:
         return {"labels": [], "solo_tiers": [], "flex_tiers": [],
                 "summary": "暂无赛季段位数据。"}
 
-    labels = [f"S{s['sid']}" for s in active]
+    labels = [get_season_name(s["sid"]) for s in active]
     solo_tiers = [_SEASON_TIER_Y.get(s.get("tier", 255), 0) for s in active]
     flex_tiers = [_SEASON_TIER_Y.get(s.get("team_tier", 255), 0) for s in active]
 
