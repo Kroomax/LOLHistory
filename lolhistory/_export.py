@@ -314,41 +314,41 @@ _TABLE_COMMENTS = {
         "对局摘要表。"
         "数据来源: WeGame API GetBattleList。"
         "以玩家视角记录每局比赛的核心数据，每局一行，game_id 主键唯一。"
-        "包含 KDA、经济、荣誉标记、段位快照等 35 列。"
+        "包含 KDA、经济、荣誉标记、段位快照等 36 列。"
         "写入策略: INSERT OR REPLACE。"
     ),
     "match_detail": (
         "对局详情表。"
         "数据来源: WeGame API GetBattleDetail。"
         "记录每局 10 位玩家的完整数据，每局最多 10 行，每位玩家一行。"
-        "包含装备(7件)、召唤师技能(2个)、符文(6个)、伤害/经济/视野等 32 列。"
+        "包含装备(7件)、召唤师技能(2个)、符文(6个)、伤害/经济/视野等 33 列。"
         "通过 game_id 关联 match_summary 表。"
-        "写入策略: INSERT OR IGNORE (通过 (game_id, summoner_name) 唯一索引去重)。"
+        "写入策略: INSERT OR IGNORE (通过 (game_id, summoner_name, area) 唯一索引去重)。"
     ),
     "summoner_profile": (
         "召唤师资料表。"
         "数据来源: GetSummonerInfo + GetPlayerRecentStat。"
         "用户当前状态的完整快照，55列。包含基本信息、赛季段位、近30天统计、生涯总数据。"
-        "每次运行覆盖更新。写入策略: INSERT OR REPLACE (以 puin 为主键)。"
+        "每次运行覆盖更新。写入策略: INSERT OR REPLACE (以 (puin, area) 复合主键)。"
     ),
     "champion_mastery": (
         "英雄熟练度表。"
         "数据来源: WeGame API GetChampion (flag=2, 需 openid)。"
-        "全部 172 个英雄的熟练度当前快照，每英雄一行，13列。"
+        "全部 172 个英雄的熟练度当前快照，每英雄一行，14列。"
         "包含场次、胜率、常用分路、赛季数据等。"
-        "写入策略: INSERT OR REPLACE (以 (puin, champion_id) 复合主键去重)。"
+        "写入策略: INSERT OR REPLACE (以 (puin, champion_id, area) 复合主键去重)。"
     ),
     "season_history": (
         "赛季历史表。"
         "数据来源: WeGame API GetBattleReport (sids=[255] 获取所有赛季)。"
-        "记录每个赛季的排位(单双排)和组排数据，每赛季一行，15列。"
-        "包含场次、段位、胜点等信息。写入策略: INSERT OR REPLACE (以 (puin, sid) 复合主键去重)。"
+        "记录每个赛季的排位(单双排)和组排数据，每赛季一行，16列。"
+        "包含场次、段位、胜点等信息。写入策略: INSERT OR REPLACE (以 (puin, sid, area) 复合主键去重)。"
     ),
     "career_overview": (
         "生涯全模式总览表。"
         "数据来源: WeGame API GetBattleReport.battle_count。"
         "记录用户在各游戏模式下(匹配/大乱斗/单双排/组排/人机/Clash/全部)的总场次、胜场、负场统计。"
-        "每用户一行，19列。写入策略: INSERT OR REPLACE (以 puin 为主键)。"
+        "每用户一行，19列。写入策略: INSERT OR REPLACE (以 (puin, area) 复合主键)。"
     ),
 }
 
@@ -390,6 +390,7 @@ _COLUMN_COMMENTS = {
         "league_points": "胜点 (0-100, 对局时的段位快照)",
         "rank": "段位等级 (如'III'、'IV', 对局时的段位快照)",
         "game_version": "游戏版本号 (如 14.10.xxx)",
+        "area": "服务器大区编号 (1=艾欧尼亚, 默认1)",
     },
     "match_detail": {
         "id": "[主键] 自增行ID",
@@ -424,6 +425,7 @@ _COLUMN_COMMENTS = {
         "vision_score": "视野得分",
         "cc_score": "控制得分 (硬控/软控)",
         "is_self": "是否为自己 (1=是, 0=否, 通过 openid 匹配)",
+        "area": "服务器大区编号 (1=艾欧尼亚, 默认1)",
     },
     "summoner_profile": {
         "puin": "[主键] WeGame 用户唯一标识 (数字UID)",
@@ -491,6 +493,7 @@ _COLUMN_COMMENTS = {
         "sid_wins": "当前赛季使用该英雄胜场",
         "sid_exp": "当前赛季该英雄经验值",
         "lanes_json": "常用分路列表 (JSON 字符串, 如 [\"中路\",\"上路\"])",
+        "area": "服务器大区编号 (1=艾欧尼亚, 默认1)",
         "last_fetch_time": "最后数据获取时间 (ISO 格式)",
     },
     "season_history": {
@@ -508,6 +511,7 @@ _COLUMN_COMMENTS = {
         "team_tier": "该赛季组排段位 (WeGame编号, 255=未定级)",
         "team_win_point": "该赛季组排胜点 (0-100)",
         "team_queue": "组排队列类型编号",
+        "area": "服务器大区编号 (1=艾欧尼亚, 默认1)",
         "last_fetch_time": "最后数据获取时间 (ISO 格式)",
     },
     "career_overview": {
@@ -530,6 +534,7 @@ _COLUMN_COMMENTS = {
         "total_ai_games": "人机模式总场次",
         "total_ai_wins": "人机模式胜场",
         "total_clash_games": "Clash (冠军杯) 总场次",
+        "area": "服务器大区编号 (1=艾欧尼亚, 默认1)",
         "last_fetch_time": "最后数据获取时间 (ISO 格式)",
     },
 }

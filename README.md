@@ -49,6 +49,8 @@ League 客户端只展示最近 20 场。WeGame 助手虽然能看到更多，�
 | 🚫 **智能过滤** | 默认跳过云顶之弈对局，只保留召唤师峡谷 |
 | 🗺️ **完整识别** | 96 种游戏队列 × 17 张地图，从排位到极限闪击全覆盖 |
 | 📊 **交互式分析报告** | 6 大板块 30+ 图表——胜率因子、英雄雷达、段位趋势、出勤热力图… |
+| 🌐 **全大区支持** | 全部 29 个大区，支持中文名/逗号分隔/全区三种模式，自动跳过无账号大区 |
+| 📊 **跨区分析报告** | 多区数据合并分析，HTML 报告内置区域切换器，一键对比各区表现 |
 | 🔐 **纯本地运行** | 数据直达你的硬盘，不经过任何第三方 |
 
 ---
@@ -173,12 +175,18 @@ python -m lolhistory --cookies cookies.json --detail-game GAME_ID
 
 # 指定大区（默认艾欧尼亚=1）
 python -m lolhistory --cookies cookies.json --area 4
+
+# 多区拉取——大区中文名（逗号分隔）
+python -m lolhistory --cookies cookies.json --area 艾欧尼亚,祖安,黑色玫瑰
+
+# 全部大区——自动跳过无账号大区
+python -m lolhistory --cookies cookies.json --area all
 ```
 
 跑完在当前目录生成两个文件：
 
 ```
-wegame_matches.csv    ← Excel 拖进去就能看，35 列中文表头
+wegame_matches.csv    ← Excel 拖进去就能看，36 列中文表头
 wegame_matches.db     ← SQLite，6 张表（对局摘要 + 10 人详情 + 召唤师资料 + 英雄熟练度 + 赛季历史 + 生涯总览）
 ```
 
@@ -191,13 +199,15 @@ wegame_matches.db     ← SQLite，6 张表（对局摘要 + 10 人详情 + 召�
 | 参数 | 说明 |
 |---|---|
 | `--cookies cookies.json` | Cookie 文件路径 |
+| `--area AREA` | 大区：支持 ID（`1`）、中文名（`艾欧尼亚`）、逗号分隔（`艾欧尼亚,祖安`）、`all`/`全部`（29 区）。默认 `1` |
 | `-n N` | 最大对局数（默认 501，上限 ~500） |
 | `--detail` | 逐场拉取 10 人完整详情（装备/符文/ban） |
 | `--detail-game ID` | 查单场详情并在终端打印 |
-| `--area N` | 大区 ID（1=艾欧尼亚，2=比尔吉沃特…） |
 | `-o ./output` | 输出目录 |
 | `--no-csv` | 跳过 CSV 导出（仅导出 SQLite） |
 | `--no-sqlite` | 跳过 SQLite 导出（仅导出 CSV） |
+| `--openid BASE64` | 手动指定加密 openid（省略则自动探测） |
+| `-v` / `--verbose` | 详细调试日志 |
 
 Cookie 还可以直接从命令行传入（无需文件）：
 
@@ -220,7 +230,7 @@ python -m lolhistory --puin <puin> --pkey "<pkey>" --tgp-biz-ticket "<ticket>" -
 
 ## 📋 导出数据说明
 
-### match_summary（每场对局一行，35 列）
+### match_summary（每场对局一行，36 列）
 
 ```
 对局ID    日期      时间      游戏时长    队列类型    地图    英雄ID    位置
@@ -229,7 +239,7 @@ MVP / SVP / 投降 / 挂机   击杀最多 / 助攻最多 / 金币最多 / 伤�
 段位      胜点      段位等级    游戏版本    大区
 ```
 
-### match_detail（每局每位玩家一行，32 列）
+### match_detail（每局每位玩家一行，33 列）
 
 ```
 对局ID    召唤师名称    英雄ID    阵营    胜负    KDA
@@ -257,6 +267,16 @@ python -m lolhistory --analyze
 | 🧠 **游戏心理** | 连胜/连败分布、发挥稳定性、挂机影响、投降分析、过度自信与救赎效应 |
 | 📈 **玩家水平** | 英雄池分布、招牌英雄雷达图（KDA/击杀/生存/经济效率）、多杀含金量、Carry 依赖度画像、经济效率分析 |
 | 📅 **出勤日历** | GitHub 风格热力图、10 场滚动胜率、时段热力分布、段位 LP 趋势、每日 LP 变化 |
+
+### 多区分析
+
+支持多区数据合并分析。当数据库包含多个大区数据时，报告自动：
+
+- 生成 **全区合并分析**，按区域切换器下拉菜单切换查看各区数据
+- 英雄皮肤背景随大区切换自动刷新
+- 报告文件名格式：`report_艾欧尼亚等3区_2026-06-13.html`
+
+> 💡 采集多区数据只需在拉取时加上 `--area 艾欧尼亚,祖安,黑色玫瑰` 或 `--area all`。
 
 ### 图表特点
 
@@ -307,7 +327,7 @@ WeGame API 服务端限制，<code>offset ≥ 500</code> 直接返回空。这�
 <summary><strong>如何打包为独立 exe？</strong></summary>
 
 ```bash
-python build_exe.py
+python gui_app_build_exe.py
 ```
 
 生成 `dist/LOLhistory.exe`（约 27MB），可复制到任意 Windows 电脑直接运行，无需安装 Python 或任何依赖。首次使用在 GUI 内点击「安装 HTTPS 证书」即可。

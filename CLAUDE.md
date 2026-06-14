@@ -18,9 +18,14 @@
 .venv/Scripts/python -m lolhistory --extract-cookies -c cookies.json    # 指定输出文件名
 
 # WeGame API（无需客户端）
-.venv/Scripts/python -m lolhistory --cookies cookies.json
-.venv/Scripts/python -m lolhistory --cookies cookies.json -n 50 --detail
-.venv/Scripts/python -m lolhistory --cookies cookies.json --detail-game GAME_ID
+.venv/Scripts/python -m lolhistory --cookies cookies.json                                # 默认艾欧尼亚
+.venv/Scripts/python -m lolhistory --cookies cookies.json -n 50 --detail                 # 50场+10人详情
+.venv/Scripts/python -m lolhistory --cookies cookies.json --detail-game GAME_ID          # 单场详情
+.venv/Scripts/python -m lolhistory --cookies cookies.json --area 祖安                    # 指定大区名
+.venv/Scripts/python -m lolhistory --cookies cookies.json --area 艾欧尼亚,祖安,黑色玫瑰  # 多区拉取（逗号分隔）
+.venv/Scripts/python -m lolhistory --cookies cookies.json --area all                     # 全部29区
+.venv/Scripts/python -m lolhistory --cookies cookies.json --no-csv --no-sqlite -v        # 调试模式，跳过导出
+.venv/Scripts/python -m lolhistory --cookies cookies.json --openid BASE64                # 手动指定 openid
 
 # 数据分析 — 从 SQLite 生成交互式 HTML 报告
 .venv/Scripts/python -m lolhistory --analyze
@@ -36,7 +41,7 @@ MVP 结构，7 个模块各司其职：
 | 文件 | 用途 |
 |------|------|
 | `__main__.py` | CLI（argparse）+ WeGame 流程编排（含自动获取召唤师/英雄熟练度/赛季报告/生涯统计） |
-| `_data.py` | 共享常量：`QUEUE_NAMES`(96)、`MAP_NAMES`(17)、`TFT_QUEUE_IDS`、`WEGAME_TIER_NAMES`(9)、工具函数 |
+| `_data.py` | 共享常量：`QUEUE_NAMES`(96)、`MAP_NAMES`(17)、`TFT_QUEUE_IDS`、`WEGAME_TIER_NAMES`(11)、`GAME_AREA_INFO`(29大区)、`SEASON_NAMES`(99赛季)、`CHAMPION_DISPLAY`(195)、`resolve_areas()` 等工具函数 |
 | `_wegame.py` | WeGame API：Cookie 认证 → WegameApiClient → 6 个 API 端点 + 6 个解析函数 |
 | `_capture_cookies.py` | Cookie 一键抓包：内嵌 mitmproxy HTTP 代理，登录 WeGame 即自动提取 |
 | `_cookie_extract.py` | Cookie 文件提取：从 Fiddler/Charles 导出的 HAR/raw/curl 文件中提取 cookie |
@@ -95,16 +100,33 @@ Cookie（与 WeGame 助手页共享 session），必需 4 个：`puin`, `pkey`, 
 `GetSummonerInfo` 需要 `trpc-caller: wegame.pallas.web.TftBattle`（其他接口用 `LolBattle`）。
 通过 `_post(path, body, extra_headers={"trpc-caller": "..."})` 临时覆盖请求头，内部用 save/restore + finally 保证不影响后续请求。
 
-### SQLite 表结构（6 张表）
+### SQLite 表结构（6 张表 + 2 张元数据表）
 
 | 表 | 主键 | 策略 | 用途 |
 |---|------|------|------|
-| `match_summary` | game_id | INSERT OR REPLACE | 每局对局摘要（35列） |
-| `match_detail` | AUTOINCREMENT + UNIQUE(game_id, summoner_name) | INSERT OR IGNORE | 每局10人完整数据（32列） |
-| `summoner_profile` | puin | INSERT OR REPLACE | 召唤师当前快照（55列）：基本信息 + 赛季段位 + 近30天 + 生涯总计 |
-| `champion_mastery` | (puin, champion_id) | INSERT OR REPLACE | 172英雄熟练度当前快照（12列）：场次/胜率/熟练度/常用分路/赛季数据 |
-| `season_history` | (puin, sid) | INSERT OR REPLACE | 赛季段位历史（14列）：每赛季排位+组排的场次/段位/胜点 |
-| `career_overview` | puin | INSERT OR REPLACE | 生涯全模式总览（19列）：匹配/大乱斗/单双排/组排/人机各模式场次 |
+| `match_summary` | game_id | INSERT OR REPLACE | 每局对局摘要（36列，含area） |
+| `match_detail` | AUTOINCREMENT + UNIQUE(game_id, summoner_name, area) | INSERT OR IGNORE | 每局10人完整数据（33列，含area） |
+| `summoner_profile` | (puin, area) | INSERT OR REPLACE | 召唤师当前快照（55列）：基本信息 + 赛季段位 + 近30天 + 生涯总计 |
+| `champion_mastery` | (puin, champion_id, area) | INSERT OR REPLACE | 172英雄熟练度当前快照（14列）：场次/胜率/熟练度/常用分路/赛季数据 |
+| `season_history` | (puin, sid, area) | INSERT OR REPLACE | 赛季段位历史（16列）：每赛季排位+组排的场次/段位/胜点 |
+| `career_overview` | (puin, area) | INSERT OR REPLACE | 生涯全模式总览（19列）：匹配/大乱斗/单双排/组排/人机各模式场次 |
+
+`table_comments` / `column_comments` 为元数据注释表，不存储业务数据。
+
+### 数据库自动迁移
+
+`_export.py` 内含自动迁移逻辑：
+
+- **v2**：新增 `area` 列到各表（`ALTER TABLE ADD COLUMN`）
+- **v3**：补充缺失列（`last_fetch_time` 等）
+- **v4**：`_rebuild_table_with_area_pk()` — 重建 4 张辅助表的主键，将 `area` 纳入复合主键
+- 清理遗留 v1 表（`champion_mastery_snapshot`, `summoner_snapshot`）
+
+迁移对用户透明，CLI 或 GUI 运行时自动触发。
+
+### 请求重试
+
+`fetch_battle_details()` 使用指数退避重试（最多 3 次，`retry_delay * attempt`），应对 WeGame API 偶发超时。
 
 ### WeGame 段位映射
 
@@ -134,6 +156,17 @@ CLI: `python -m lolhistory --analyze [--db wegame_matches.db] [--output report.h
 | 四、游戏心理 | `#psychology` | 5 卡片：胜负连势 → 发挥稳定性 → 挂机影响 → 投降分析 + 过度自信与救赎效应（全宽） |
 | 五、玩家水平 | `#player-level` | 6 卡片：英雄池分布 → 招牌英雄雷达（全宽）→ LP爬分效率 → 多杀含金量 → Carry依赖度画像（全宽）→ 经济效率分析 |
 | 六、出勤日历 | `#attendance` | 7 卡片：关键日期（全宽）→ 出勤热力图（全宽）→ 10场滚动胜率 → 时段热力图（全宽）→ 对局数量热力图（全宽）→ 段位LP趋势（全宽）→ 每日LP变化 |
+
+### 多区分析
+
+当数据库包含多个大区数据时，`generate_report()` 自动切换多区模式：
+
+- 生成合并的全区分析（key=0），默认显示
+- 导航栏添加**区域选择器下拉菜单**，切换不同大区数据
+- 4 个 merge 函数合并跨区数据：`_merge_champion_mastery()`、`_merge_season_history()`、`_merge_summoner_profiles()`、`_merge_career_overviews()`
+- 英雄皮肤背景随大区切换而刷新（WeGame CDN 自动探测可用皮肤）
+- 报告文件名格式：`report_艾欧尼亚等3区_2026-06-13.html`
+- `_build_html_multi()` 负责多区 HTML 渲染，Chart.js 实例在切换时销毁重建
 
 ### 关键实现细节
 

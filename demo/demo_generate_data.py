@@ -143,7 +143,7 @@ CREATE TABLE IF NOT EXISTS match_summary (
 
 SQL_CREATE_SUMMONER_PROFILE = """
 CREATE TABLE IF NOT EXISTS summoner_profile (
-    puin                 TEXT PRIMARY KEY,
+    puin                 TEXT NOT NULL,
     summoner_id          INTEGER,
     summoner_name        TEXT,
     name_tag             TEXT,
@@ -193,7 +193,8 @@ CREATE TABLE IF NOT EXISTS summoner_profile (
     total_ward_placed    INTEGER,
     longest_game_num     INTEGER,
     shortest_game_num    INTEGER,
-    last_fetch_time      TEXT
+    last_fetch_time      TEXT,
+    PRIMARY KEY (puin, area)
 )
 """
 
@@ -207,12 +208,13 @@ CREATE TABLE IF NOT EXISTS champion_mastery (
     mastery_exp     INTEGER,
     expire_day      INTEGER,
     instance_id     TEXT,
+    area            INTEGER DEFAULT 1,
     sid_total       INTEGER,
     sid_wins        INTEGER,
     sid_exp         INTEGER,
     lanes_json      TEXT,
     last_fetch_time TEXT,
-    PRIMARY KEY (puin, champion_id)
+    PRIMARY KEY (puin, champion_id, area)
 )
 """
 
@@ -232,14 +234,15 @@ CREATE TABLE IF NOT EXISTS season_history (
     team_tier       INTEGER,
     team_win_point  INTEGER,
     team_queue      INTEGER,
+    area            INTEGER DEFAULT 1,
     last_fetch_time TEXT,
-    PRIMARY KEY (puin, sid)
+    PRIMARY KEY (puin, sid, area)
 )
 """
 
 SQL_CREATE_CAREER_OVERVIEW = """
 CREATE TABLE IF NOT EXISTS career_overview (
-    puin                TEXT PRIMARY KEY,
+    puin                TEXT NOT NULL,
     total_match_games   INTEGER,
     total_match_wins    INTEGER,
     total_match_losses  INTEGER,
@@ -258,10 +261,11 @@ CREATE TABLE IF NOT EXISTS career_overview (
     total_ai_games      INTEGER,
     total_ai_wins       INTEGER,
     total_clash_games   INTEGER,
-    last_fetch_time     TEXT
+    area                INTEGER DEFAULT 1,
+    last_fetch_time     TEXT,
+    PRIMARY KEY (puin, area)
 )
 """
-
 
 def weighted_choice(items, weights):
     """按权重随机选择。"""
@@ -724,7 +728,7 @@ def create_database(matches: list[dict], db_path: str = "demo_matches.db"):
     # ── 3. champion_mastery ──
     mastery_cols = [
         "puin", "champion_id", "total_games", "wins", "win_rate",
-        "mastery_exp", "expire_day", "instance_id",
+        "mastery_exp", "expire_day", "instance_id", "area",
         "sid_total", "sid_wins", "sid_exp", "lanes_json", "last_fetch_time",
     ]
     for cid, tg, w, wr, exp in MASTERY_POOL:
@@ -733,7 +737,7 @@ def create_database(matches: list[dict], db_path: str = "demo_matches.db"):
         db.execute(
             f"INSERT INTO champion_mastery ({', '.join(mastery_cols)}) "
             f"VALUES ({', '.join('?' * len(mastery_cols))})",
-            (PUIN, cid, tg, w, wr, exp, -1, "", tg, w, exp // 10, lanes_json, now)
+            (PUIN, cid, tg, w, wr, exp, -1, "", 1, tg, w, exp // 10, lanes_json, now)
         )
     print(f"  champion_mastery: {len(MASTERY_POOL)} 行")
 
@@ -742,7 +746,7 @@ def create_database(matches: list[dict], db_path: str = "demo_matches.db"):
         "puin", "sid", "total_games", "wins", "losses",
         "tier", "win_point", "queue",
         "team_total", "team_wins", "team_losses",
-        "team_tier", "team_win_point", "team_queue", "last_fetch_time",
+        "team_tier", "team_win_point", "team_queue", "area", "last_fetch_time",
     ]
     # 模拟 8 个赛季的数据
     seasons_data = [
@@ -759,7 +763,7 @@ def create_database(matches: list[dict], db_path: str = "demo_matches.db"):
         db.execute(
             f"INSERT INTO season_history ({', '.join(season_cols)}) "
             f"VALUES ({', '.join('?' * len(season_cols))})",
-            (PUIN, sid, tg, w, l, tier, wp, q, tt, tw, tl, ttier, twp, tq, now)
+            (PUIN, sid, tg, w, l, tier, wp, q, tt, tw, tl, ttier, twp, tq, 1, now)
         )
     print(f"  season_history: {len(seasons_data)} 行")
 
@@ -770,7 +774,7 @@ def create_database(matches: list[dict], db_path: str = "demo_matches.db"):
         "total_rank_games", "total_rank_wins", "total_rank_losses",
         "total_teamrank_games", "total_teamrank_wins", "total_teamrank_losses",
         "total_all_games", "total_all_wins", "total_all_losses",
-        "total_ai_games", "total_ai_wins", "total_clash_games",
+        "total_ai_games", "total_ai_wins", "total_clash_games", "area",
         "last_fetch_time",
     ]
     rank_g = sum(1 for m in matches if m["game_queue_id"] == 420)
@@ -795,7 +799,7 @@ def create_database(matches: list[dict], db_path: str = "demo_matches.db"):
          rank_g, rank_w, rank_g - rank_w,
          flex_g, flex_w, flex_g - flex_w,
          total_all, total_all_w, total_all - total_all_w,
-         ai_g, ai_g, clash_g, now)
+         ai_g, ai_g, clash_g, 1, now)
     )
     print("  career_overview: 1 行")
 
