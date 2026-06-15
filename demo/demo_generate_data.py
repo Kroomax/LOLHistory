@@ -1,12 +1,14 @@
 """生成演示用模拟数据，用于项目展示。
 
 用法:
-    .venv/Scripts/python demo/demo_generate_data.py        # 生成 db + 报告
-    .venv/Scripts/python demo/demo_generate_data.py --db-only    # 仅生成数据库
-    .venv/Scripts/python demo/demo_generate_data.py --games 500  # 自定义对局数
+    .venv/Scripts/python demo/demo_generate_data.py                # 生成多区 db + 报告
+    .venv/Scripts/python demo/demo_generate_data.py --db-only      # 仅生成数据库
+    .venv/Scripts/python demo/demo_generate_data.py --games 500    # 自定义对局数
+    .venv/Scripts/python demo/demo_generate_data.py --area 祖安    # 仅生成单区数据
 """
 
 import sys
+import json
 import sqlite3
 import random
 import os
@@ -97,6 +99,53 @@ PUIN = "10086"
 OPENID = "demo_openid_base64_xxx"
 
 random.seed(42)
+
+# ── 大区配置（3 个区，按权重分配局数）──────────────────────────────────────
+# 每区独立参数：起始段位、胜率、英雄偏好，让报告数据有明显差异化
+AREA_CONFIGS = [
+    {
+        "area_id": 1,
+        "name": "艾欧尼亚",
+        "name_tag": "电信一",
+        "game_id_offset": 0,                     # game_id 前缀偏移（防冲突）
+        "weight": 60,                            # 总局数占比 %
+        "win_prob": {"ranked": 0.54, "normal": 0.55, "aram": 0.52},
+        "start_tier": 3, "start_lp": 15, "start_rank": "IV",   # 铂金起步
+        "hero_weights": {"MIDDLE": 1.8, "JUNGLE": 1.5,
+                         "BOTTOM": 0.5, "TOP": 0.5, "UTILITY": 0.3},
+        "summoner_name": "DemoPlayerOne",
+        "level": 287,
+    },
+    {
+        "area_id": 3,
+        "name": "祖安",
+        "name_tag": "网通二",
+        "game_id_offset": 1,
+        "weight": 25,
+        "win_prob": {"ranked": 0.50, "normal": 0.51, "aram": 0.49},
+        "start_tier": 4, "start_lp": 25, "start_rank": "III",  # 黄金起步
+        "hero_weights": {"BOTTOM": 1.6, "TOP": 1.4,
+                         "MIDDLE": 0.7, "JUNGLE": 0.6, "UTILITY": 0.4},
+        "summoner_name": "DemoPlayerZan",
+        "level": 156,
+    },
+    {
+        "area_id": 14,
+        "name": "黑色玫瑰",
+        "name_tag": "电信十",
+        "game_id_offset": 2,
+        "weight": 15,
+        "win_prob": {"ranked": 0.47, "normal": 0.48, "aram": 0.48},
+        "start_tier": 5, "start_lp": 10, "start_rank": "IV",   # 白银起步
+        "hero_weights": {"UTILITY": 2.0, "TOP": 1.3,
+                         "MIDDLE": 0.6, "JUNGLE": 0.5, "BOTTOM": 0.5},
+        "summoner_name": "DemoPlayerRose",
+        "level": 98,
+    },
+]
+
+# 按 area_id 建立索引
+_AREA_CONFIG_BY_ID = {ac["area_id"]: ac for ac in AREA_CONFIGS}
 
 # ── SQL 建表 ─────────────────────────────────────────────────────────────────
 
@@ -279,9 +328,15 @@ def weighted_choice(items, weights):
     return items[-1]
 
 
-def pick_hero() -> tuple[int, str, str]:
-    """按权重随机选择英雄。"""
-    hero = weighted_choice(HERO_POOL, [h[3] for h in HERO_POOL])
+def pick_hero(area_config: dict | None = None) -> tuple[int, str, str]:
+    """按权重随机选择英雄，area_config 中的 hero_weights 可调整各位置偏好。"""
+    hero_weights = (area_config or {}).get("hero_weights", {})
+    if not hero_weights:
+        adjusted = HERO_POOL
+    else:
+        adjusted = [(h[0], h[1], h[2], h[3] * hero_weights.get(h[2], 1.0))
+                    for h in HERO_POOL]
+    hero = weighted_choice(adjusted, [h[3] for h in adjusted])
     return hero[0], hero[1], hero[2]  # id, name, position
 
 
@@ -346,21 +401,29 @@ def _pick_game_hour(weekday: int) -> int:
     return random.choices(range(24), weights=hour_weights)[0]
 
 
-def generate_matches(num_games: int = 250) -> list[dict]:
+def generate_matches(area_config: dict, num_games: int = 250) -> list[dict]:
     """生成模拟对局数据，包含明显的连续游戏轮次（session）。
 
+    使用 area_config 控制胜率、段位起点、英雄偏好等差异化参数。
     约70%的对局属于某个连续轮次（session内间隔15-90分钟），
     约30%是孤立对局（session间间隔4-72小时）。
     """
+    area_id = area_config["area_id"]
     matches = []
     current_date = BASE_DATE
-    # 段位演进：从黄金4 (tier=4, lp=20) 慢慢爬到铂金2 (tier=3, lp=60)
-    current_tier = 4     # WeGame: 4=黄金
-    current_lp = 20
-    current_rank = "III"
+
+    # 每区不同的段位起点（编码：3=铂金, 4=黄金, 5=白银）
+    current_tier = area_config.get("start_tier", 4)
+    current_lp = area_config.get("start_lp", 20)
+    current_rank = area_config.get("start_rank", "III")
+
+    # 每区不同的胜率
+    win_prob_ranked = area_config.get("win_prob", {}).get("ranked", 0.52)
+    win_prob_normal = area_config.get("win_prob", {}).get("normal", 0.53)
+    win_prob_aram = area_config.get("win_prob", {}).get("aram", 0.50)
 
     ranked_games_count = 0
-    game_counter = 1000000000
+    game_counter = 1000000000 + area_config["game_id_offset"] * 1000000
     i = 0
 
     while i < num_games:
@@ -379,21 +442,16 @@ def generate_matches(num_games: int = 250) -> list[dict]:
         session_size = min(session_size, remaining)
 
         # ── 生成 session 起始时间 ──
-        # 在 current_date 之后随机偏移天数
         if i == 0:
-            # 首局：从 BASE_DATE 开始
             day_offset = 0
         else:
-            # session 之间间隔 4-72 小时
             day_offset = random.choices(
                 [0, 1, 2, 3],
-                weights=[30, 35, 25, 10]  # 多数在 0-2 天内
+                weights=[30, 35, 25, 10]
             )[0]
-            # 额外加小时偏移
             extra_hours = random.randint(0, 23)
             current_date += timedelta(days=day_offset, hours=extra_hours)
 
-        # 选择这个 session 的起始小时
         weekday = current_date.weekday()
         session_start_hour = _pick_game_hour(weekday)
         session_start = current_date.replace(
@@ -401,7 +459,6 @@ def generate_matches(num_games: int = 250) -> list[dict]:
             minute=random.randint(0, 59),
             second=0, microsecond=0
         )
-        # 确保不早于 current_date
         if session_start < current_date:
             session_start = current_date
 
@@ -413,9 +470,8 @@ def generate_matches(num_games: int = 250) -> list[dict]:
             game_counter += 1
             game_id = str(game_counter)
 
-            # 决定队列类型 — session 内偏好一致（如排位session vs 大乱斗session）
+            # 决定队列类型
             if j == 0:
-                # session 首局决定主类型
                 queue_roll = random.random()
                 if queue_roll < 0.55:
                     session_queue_type = "ranked"
@@ -426,7 +482,6 @@ def generate_matches(num_games: int = 250) -> list[dict]:
                 else:
                     session_queue_type = "flex"
 
-            # 在 session 类型基础上，10% 概率切换类型
             actual_type = session_queue_type
             if random.random() < 0.10:
                 actual_type = random.choice(["ranked", "normal", "aram", "flex"])
@@ -442,27 +497,24 @@ def generate_matches(num_games: int = 250) -> list[dict]:
 
             is_ranked = queue_id == 420
 
-            # 生成对局时间（session 内第1局用 session_start，后续局累加间隔）
             if j == 0:
                 dt = session_dt
             else:
-                # session 内间隔：游戏时长(15-42min) + 排队/结算时间(5-25min)
                 session_dt += timedelta(
-                    minutes=random.randint(20, 40),  # 一局游戏+排队
+                    minutes=random.randint(20, 40),
                     seconds=random.randint(0, 3599)
                 )
                 dt = session_dt
 
-            # 推进 session 内时间
             session_dt = dt + timedelta(minutes=random.randint(15, 35))
 
-            # ── 选择英雄 ──
+            # ── 选择英雄（每区不同偏好）──
             if queue_id == 450:
                 hero_id = random.choice([h[0] for h in HERO_POOL[:10]])
                 hero_name = next(h[1] for h in HERO_POOL if h[0] == hero_id)
                 position = "Invalid"
             else:
-                hero_id, hero_name, position = pick_hero()
+                hero_id, hero_name, position = pick_hero(area_config)
 
             # ── 游戏时长 ──
             if queue_id == 450:
@@ -473,13 +525,13 @@ def generate_matches(num_games: int = 250) -> list[dict]:
                     weights=[3, 8, 15, 20, 20, 15, 8, 3, 1]
                 )[0] + random.randint(-120, 180)
 
-            # ── 胜负 ──
+            # ── 胜负（每区不同胜率）──
             if is_ranked:
-                win_prob = 0.52
+                win_prob = win_prob_ranked
             elif queue_id == 450:
-                win_prob = 0.50
+                win_prob = win_prob_aram
             else:
-                win_prob = 0.53
+                win_prob = win_prob_normal
             if is_ranked and current_lp >= 80:
                 win_prob -= 0.03
             is_win = random.random() < win_prob
@@ -521,15 +573,17 @@ def generate_matches(num_games: int = 250) -> list[dict]:
 
                 # 晋级/降级
                 if current_lp >= 100:
-                    if current_tier == 4:
-                        if random.random() < 0.7:
+                    if current_tier == 5 and random.random() < 0.5:
+                        current_tier = 4; current_lp = random.randint(5, 20); current_rank = "IV"
+                    elif current_tier == 4:
+                        if random.random() < 0.6:
                             current_tier = 3
                             current_lp = random.randint(5, 25)
                             current_rank = random.choice(["II", "III"])
                         else:
                             current_lp = 75 + random.randint(0, 15)
                     elif current_tier == 3:
-                        if ranked_games_count > 80 and random.random() < 0.6:
+                        if ranked_games_count > 60 and random.random() < 0.5:
                             current_tier = 2
                             current_lp = random.randint(3, 20)
                             current_rank = "IV"
@@ -539,10 +593,10 @@ def generate_matches(num_games: int = 250) -> list[dict]:
                         current_lp = random.randint(70, 99)
                 elif current_lp <= 0:
                     current_lp = random.randint(5, 30)
-                    if current_tier == 3 and random.random() < 0.1:
-                        current_tier = 4
-                        current_lp = 75
-                        current_rank = "I"
+                    if current_tier == 4 and random.random() < 0.1:
+                        current_tier = 5; current_lp = 75; current_rank = "I"
+                    elif current_tier == 3 and random.random() < 0.08:
+                        current_tier = 4; current_lp = 75; current_rank = "I"
 
                 # 小段晋升
                 if current_lp > 60 and current_rank == "III" and random.random() < 0.05:
@@ -569,58 +623,51 @@ def generate_matches(num_games: int = 250) -> list[dict]:
                 "kda": kda, "game_score": game_score, "gold_earned": gold,
                 **mk, **honors,
                 "tier": tier_str, "league_points": lp_val, "rank": rank_str,
-                "game_version": version, "area": 1,
+                "game_version": version, "area": area_id,
             })
 
-        # ── session 结束，推进 current_date ──
+        # ── session 结束 ──
         current_date = session_dt
 
-    # 按时间排序
     matches.sort(key=lambda m: m["_dt"])
     return matches
 
 
 # ── 数据库写入 ────────────────────────────────────────────────────────────────
 
-def create_database(matches: list[dict], db_path: str = "demo_matches.db"):
-    """创建 demo SQLite 数据库。"""
-    if Path(db_path).exists():
-        os.remove(db_path)
+SUMMARY_COLS = [
+    "game_id", "game_start_time", "game_time_played", "game_queue_id",
+    "queue_name", "map_id", "map_name", "champion_id", "position", "team_id",
+    "win", "kills", "deaths", "assists", "kda", "game_score", "gold_earned",
+    "double_kills", "triple_kills", "quadra_kills", "penta_kills",
+    "was_mvp", "was_svp", "was_surrender", "was_afk",
+    "most_kills", "most_assists", "most_gold", "most_damage",
+    "most_taken", "most_turrets",
+    "tier", "league_points", "rank", "game_version", "area",
+]
+_SUMMARY_PLACEHOLDERS = ", ".join("?" * len(SUMMARY_COLS))
 
-    db = sqlite3.connect(db_path)
-    db.execute("PRAGMA journal_mode=WAL")
 
-    db.execute(SQL_CREATE_MATCH_SUMMARY)
-    db.execute(SQL_CREATE_SUMMONER_PROFILE)
-    db.execute(SQL_CREATE_CHAMPION_MASTERY)
-    db.execute(SQL_CREATE_SEASON_HISTORY)
-    db.execute(SQL_CREATE_CAREER_OVERVIEW)
-
-    # ── 1. match_summary ──
-    summary_cols = [
-        "game_id", "game_start_time", "game_time_played", "game_queue_id",
-        "queue_name", "map_id", "map_name", "champion_id", "position", "team_id",
-        "win", "kills", "deaths", "assists", "kda", "game_score", "gold_earned",
-        "double_kills", "triple_kills", "quadra_kills", "penta_kills",
-        "was_mvp", "was_svp", "was_surrender", "was_afk",
-        "most_kills", "most_assists", "most_gold", "most_damage",
-        "most_taken", "most_turrets",
-        "tier", "league_points", "rank", "game_version", "area",
-    ]
-    placeholders = ", ".join("?" * len(summary_cols))
-    insert_sql = f"INSERT INTO match_summary ({', '.join(summary_cols)}) VALUES ({placeholders})"
-
+def _write_players_summary(db, matches: list[dict]):
+    """写入对局摘要。"""
     rows = []
     for m in matches:
-        row = tuple(m.get(col, 0) if col not in ("tier", "rank", "queue_name",
-                                                  "map_name", "game_start_time",
-                                                  "game_version", "position")
-                    else m.get(col, "") for col in summary_cols)
-        rows.append(row)
-    db.executemany(insert_sql, rows)
-    print(f"  match_summary: {len(rows)} 行")
+        rows.append(tuple(
+            m.get(col, 0) if col not in ("tier", "rank", "queue_name",
+                                          "map_name", "game_start_time",
+                                          "game_version", "position")
+            else m.get(col, "") for col in SUMMARY_COLS
+        ))
+    db.executemany(
+        f"INSERT INTO match_summary ({', '.join(SUMMARY_COLS)}) VALUES ({_SUMMARY_PLACEHOLDERS})",
+        rows,
+    )
+    print(f"    match_summary: {len(rows)} 行")
 
-    # ── 2. summoner_profile ──
+
+def _write_summoner_profile(db, area_config: dict, matches: list[dict], now: str):
+    """写入召唤师资料（每区一行）。"""
+    area = area_config["area_id"]
     ranked = [m for m in matches if m["game_queue_id"] == 420]
     total_games = len(matches)
     total_wins = sum(1 for m in matches if m["win"])
@@ -631,11 +678,10 @@ def create_database(matches: list[dict], db_path: str = "demo_matches.db"):
     total_penta = sum(m["penta_kills"] for m in matches)
     total_quadra = sum(m["quadra_kills"] for m in matches)
     total_triple = sum(m["triple_kills"] for m in matches)
-    max_kills = max(m["kills"] for m in matches)
-    max_assists = max(m["assists"] for m in matches)
-    max_gold = max(m["gold_earned"] for m in matches)
+    max_kills = max(m["kills"] for m in matches) if matches else 0
+    max_assists = max(m["assists"] for m in matches) if matches else 0
+    max_gold = max(m["gold_earned"] for m in matches) if matches else 0
 
-    # 计算最长连胜
     longest_streak = 0
     cur = 0
     for m in sorted(matches, key=lambda x: x["_dt"]):
@@ -645,23 +691,26 @@ def create_database(matches: list[dict], db_path: str = "demo_matches.db"):
         else:
             cur = 0
 
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    # 找出最后段位
     last_ranked = ranked[-1] if ranked else None
     s_tier = int(last_ranked["tier"]) if last_ranked and last_ranked["tier"] else 3
     s_lp = last_ranked["league_points"] if last_ranked else 60
     s_total = len(ranked)
     s_wins = sum(1 for m in ranked if m["win"])
 
-    # 近30天数据
-    last_dt = matches[-1]["_dt"]
+    last_dt = matches[-1]["_dt"] if matches else datetime.now()
     thirty_days_ago = last_dt - timedelta(days=30)
     recent = [m for m in matches if m["_dt"] >= thirty_days_ago]
     r_kills = sum(m["kills"] for m in recent)
     r_deaths = sum(m["deaths"] for m in recent)
     r_assists = sum(m["assists"] for m in recent)
     r_wins = sum(1 for m in recent if m["win"])
+
+    # 根据每区英雄偏好生成 common_champions / common_positions
+    hw = area_config["hero_weights"]
+    best_poses = sorted(hw, key=hw.get, reverse=True)[:2]
+    pos_names = [POSITION_NAMES[p] for p in best_poses]
+    top_heroes = [h for h in HERO_POOL if h[2] in best_poses][:3]
+    champ_names = [h[1].split()[-1] for h in top_heroes]
 
     profile_cols = [
         "puin", "summoner_id", "summoner_name", "name_tag", "level",
@@ -683,10 +732,16 @@ def create_database(matches: list[dict], db_path: str = "demo_matches.db"):
         "longest_game_num", "shortest_game_num", "last_fetch_time",
     ]
     profile = {
-        "puin": PUIN, "summoner_id": 12345678, "summoner_name": "DemoPlayer",
-        "name_tag": "CN1", "level": 287, "experience": 150000,
-        "icon_id": 23, "praise": 342, "discredit": 12, "top_of_canyon": 0,
-        "openid": OPENID, "area": 1,
+        "puin": PUIN, "summoner_id": 10000000 + area,
+        "summoner_name": area_config["summoner_name"],
+        "name_tag": area_config["name_tag"],
+        "level": area_config["level"],
+        "experience": area_config["level"] * 500,
+        "icon_id": random.randint(1, 50),
+        "praise": random.randint(100, 800),
+        "discredit": random.randint(0, 30),
+        "top_of_canyon": 0,
+        "openid": OPENID, "area": area,
         "season_sid": 26, "season_total": s_total,
         "season_wins": s_wins, "season_losses": s_total - s_wins,
         "season_tier": s_tier, "season_win_point": s_lp,
@@ -694,28 +749,28 @@ def create_database(matches: list[dict], db_path: str = "demo_matches.db"):
         "kill_30days": r_kills, "death_30days": r_deaths,
         "assist_30days": r_assists,
         "recent_win_times": r_wins, "recent_play_times": len(recent),
-        "last_game_id": matches[-1]["game_id"],
+        "last_game_id": matches[-1]["game_id"] if matches else "",
         "recent_kda_score": round((r_kills + r_assists) / max(r_deaths, 1) * 100),
-        "last_game_time": matches[-1]["game_start_time"],
-        "common_champions": '["亚索", "李青", "劫"]',
-        "common_positions": '["中单", "打野"]',
+        "last_game_time": matches[-1]["game_start_time"] if matches else "",
+        "common_champions": json.dumps(champ_names),
+        "common_positions": json.dumps(pos_names),
         "total_mvp_times": total_mvp, "total_svp_times": total_svp,
         "total_god_likes": total_penta * 3 + 15,
         "total_penta_kills": total_penta, "total_quadra_kills": total_quadra,
         "total_triple_kills": total_triple,
         "max_consecutive_wins": longest_streak,
-        "highest_game_score": max(m["game_score"] for m in matches),
+        "highest_game_score": max(m["game_score"] for m in matches) if matches else 0,
         "most_kills_num": max_kills, "most_assists_num": max_assists,
         "most_spree_kills_num": max_kills,
-        "most_damage_num": max(m.get("most_damage", 0) * random.randint(30000, 60000) for m in matches),
+        "most_damage_num": max(m.get("most_damage", 0) * random.randint(30000, 60000) for m in matches) if matches else 0,
         "most_damage_taken_num": random.randint(40000, 80000),
         "most_gold_earned_num": max_gold,
-        "most_minions_kill_num": random.randint(250, 400),
-        "most_turrets_kill_num": 6,
+        "most_minions_kill_num": random.randint(200, 400),
+        "most_turrets_kill_num": random.randint(3, 8),
         "total_kills": total_kills, "total_assists": total_assists,
         "total_ward_placed": total_games * random.randint(8, 20),
-        "longest_game_num": max(m["game_time_played"] for m in matches),
-        "shortest_game_num": min(m["game_time_played"] for m in matches),
+        "longest_game_num": max(m["game_time_played"] for m in matches) if matches else 0,
+        "shortest_game_num": min(m["game_time_played"] for m in matches) if matches else 0,
         "last_fetch_time": now,
     }
     placeholders = ", ".join("?" * len(profile_cols))
@@ -723,51 +778,117 @@ def create_database(matches: list[dict], db_path: str = "demo_matches.db"):
         f"INSERT INTO summoner_profile ({', '.join(profile_cols)}) VALUES ({placeholders})",
         tuple(profile.get(col, "") for col in profile_cols)
     )
-    print("  summoner_profile: 1 行")
+    print(f"    summoner_profile（{area_config['name']}）: 1 行")
 
-    # ── 3. champion_mastery ──
+
+def _write_champion_mastery(db, area_config: dict, now: str):
+    """写入英雄熟练度（每区不同偏好缩放）。"""
+    area = area_config["area_id"]
+    hw = area_config["hero_weights"]
     mastery_cols = [
         "puin", "champion_id", "total_games", "wins", "win_rate",
         "mastery_exp", "expire_day", "instance_id", "area",
         "sid_total", "sid_wins", "sid_exp", "lanes_json", "last_fetch_time",
     ]
     for cid, tg, w, wr, exp in MASTERY_POOL:
-        lanes = next((h[2] for h in HERO_POOL if h[0] == cid), "MIDDLE")
+        hero = next((h for h in HERO_POOL if h[0] == cid), None)
+        if hero:
+            mul = hw.get(hero[2], 0.4)
+            scaled_tg = max(1, int(tg * mul * 0.7))
+            scaled_w = max(0, int(w * mul * 0.7))
+            scaled_exp = max(100, int(exp * mul * 0.7))
+            lanes = hero[2]
+        else:
+            scaled_tg = max(1, tg // 4)
+            scaled_w = max(0, w // 4)
+            scaled_exp = max(50, exp // 4)
+            lanes = "MIDDLE"
         lanes_json = f'["{POSITION_NAMES.get(lanes, lanes)}"]'
         db.execute(
             f"INSERT INTO champion_mastery ({', '.join(mastery_cols)}) "
             f"VALUES ({', '.join('?' * len(mastery_cols))})",
-            (PUIN, cid, tg, w, wr, exp, -1, "", 1, tg, w, exp // 10, lanes_json, now)
+            (PUIN, cid, scaled_tg, scaled_w, round(scaled_w / scaled_tg * 100, 1),
+             scaled_exp, -1, "", area,
+             scaled_tg, scaled_w, scaled_exp // 10, lanes_json, now)
         )
-    print(f"  champion_mastery: {len(MASTERY_POOL)} 行")
+    print(f"    champion_mastery（{area_config['name']}）: {len(MASTERY_POOL)} 行")
 
-    # ── 4. season_history ──
+
+def _write_season_history(db, area_config: dict, matches: list[dict], now: str):
+    """写入赛季段位历史（每区独立的段位轨迹）。"""
+    area = area_config["area_id"]
+    ranked = [m for m in matches if m["game_queue_id"] == 420]
+    s_total = len(ranked)
+    s_wins = sum(1 for m in ranked if m["win"])
+    last_ranked = ranked[-1] if ranked else None
+    s_tier = int(last_ranked["tier"]) if last_ranked and last_ranked["tier"] else 3
+    s_lp = last_ranked["league_points"] if last_ranked else 60
+
     season_cols = [
         "puin", "sid", "total_games", "wins", "losses",
         "tier", "win_point", "queue",
         "team_total", "team_wins", "team_losses",
         "team_tier", "team_win_point", "team_queue", "area", "last_fetch_time",
     ]
-    # 模拟 8 个赛季的数据
+    # 根据起始段位生成 8 个赛季的递进数据
+    base_tier = area_config["start_tier"]
     seasons_data = [
-        (19, 45, 20, 25, 5, 55, 420, 10, 4, 6, 5, 45, 440),
-        (20, 52, 26, 26, 4, 45, 420, 12, 6, 6, 4, 36, 440),
-        (21, 60, 32, 28, 4, 65, 420, 15, 8, 7, 4, 55, 440),
-        (22, 58, 30, 28, 4, 28, 420, 8, 4, 4, 4, 22, 440),
-        (23, 65, 34, 31, 3, 72, 420, 18, 10, 8, 3, 60, 440),
-        (24, 70, 36, 34, 3, 48, 420, 20, 11, 9, 3, 42, 440),
-        (25, 72, 38, 34, 3, 35, 420, 22, 12, 10, 3, 28, 440),
-        (26, s_total, s_wins, s_total - s_wins, s_tier, s_lp, 420, 15, 8, 7, 3, 30, 440),
+        (19, random.randint(30, 60), random.randint(12, 30), random.randint(12, 30),
+         min(5, base_tier + 2), random.randint(20, 70), 420,
+         random.randint(5, 20), random.randint(2, 10), random.randint(2, 10),
+         min(5, base_tier + 2), random.randint(10, 60), 440),
+        (20, random.randint(35, 65), random.randint(15, 33), random.randint(15, 33),
+         min(5, base_tier + 1), random.randint(25, 75), 420,
+         random.randint(5, 20), random.randint(3, 11), random.randint(2, 10),
+         min(5, base_tier + 1), random.randint(15, 65), 440),
+        (21, random.randint(40, 70), random.randint(18, 36), random.randint(18, 36),
+         base_tier, random.randint(30, 80), 420,
+         random.randint(8, 22), random.randint(4, 12), random.randint(3, 11),
+         base_tier, random.randint(20, 70), 440),
+        (22, random.randint(40, 70), random.randint(18, 36), random.randint(18, 36),
+         base_tier, random.randint(25, 75), 420,
+         random.randint(8, 22), random.randint(4, 12), random.randint(3, 11),
+         base_tier, random.randint(15, 65), 440),
+        (23, random.randint(45, 75), random.randint(20, 38), random.randint(20, 38),
+         base_tier, random.randint(30, 80), 420,
+         random.randint(10, 25), random.randint(5, 14), random.randint(4, 12),
+         base_tier, random.randint(20, 70), 440),
+        (24, random.randint(50, 80), random.randint(22, 42), random.randint(22, 42),
+         max(2, base_tier - 1), random.randint(35, 85), 420,
+         random.randint(10, 25), random.randint(5, 14), random.randint(4, 12),
+         max(2, base_tier - 1), random.randint(25, 75), 440),
+        (25, random.randint(50, 80), random.randint(22, 42), random.randint(22, 42),
+         max(2, base_tier - 1), random.randint(30, 80), 420,
+         random.randint(12, 28), random.randint(6, 15), random.randint(5, 14),
+         max(2, base_tier - 1), random.randint(20, 70), 440),
+        (26, s_total, s_wins, s_total - s_wins,
+         s_tier, s_lp, 420,
+         random.randint(10, 20), random.randint(4, 12), random.randint(4, 10),
+         max(2, s_tier - 1), random.randint(15, 50), 440),
     ]
     for sid, tg, w, l, tier, wp, q, tt, tw, tl, ttier, twp, tq in seasons_data:
         db.execute(
             f"INSERT INTO season_history ({', '.join(season_cols)}) "
             f"VALUES ({', '.join('?' * len(season_cols))})",
-            (PUIN, sid, tg, w, l, tier, wp, q, tt, tw, tl, ttier, twp, tq, 1, now)
+            (PUIN, sid, tg, w, l, tier, wp, q, tt, tw, tl, ttier, twp, tq, area, now)
         )
-    print(f"  season_history: {len(seasons_data)} 行")
+    print(f"    season_history（{area_config['name']}）: {len(seasons_data)} 行")
 
-    # ── 5. career_overview ──
+
+def _write_career_overview(db, area_config: dict, matches: list[dict], now: str):
+    """写入生涯总览（每区一行）。"""
+    area = area_config["area_id"]
+    total_games = len(matches)
+    total_wins = sum(1 for m in matches if m["win"])
+    rank_g = sum(1 for m in matches if m["game_queue_id"] == 420)
+    rank_w = sum(1 for m in matches if m["game_queue_id"] == 420 and m["win"])
+    match_g = sum(1 for m in matches if m["game_queue_id"] == 430)
+    match_w = sum(1 for m in matches if m["game_queue_id"] == 430 and m["win"])
+    aram_g = sum(1 for m in matches if m["game_queue_id"] == 450)
+    aram_w = sum(1 for m in matches if m["game_queue_id"] == 450 and m["win"])
+    flex_g = sum(1 for m in matches if m["game_queue_id"] == 440)
+    flex_w = sum(1 for m in matches if m["game_queue_id"] == 440 and m["win"])
+
     career_cols = [
         "puin", "total_match_games", "total_match_wins", "total_match_losses",
         "total_aram_games", "total_aram_wins", "total_aram_losses",
@@ -777,19 +898,8 @@ def create_database(matches: list[dict], db_path: str = "demo_matches.db"):
         "total_ai_games", "total_ai_wins", "total_clash_games", "area",
         "last_fetch_time",
     ]
-    rank_g = sum(1 for m in matches if m["game_queue_id"] == 420)
-    rank_w = sum(1 for m in matches if m["game_queue_id"] == 420 and m["win"])
-    match_g = sum(1 for m in matches if m["game_queue_id"] == 430)
-    match_w = sum(1 for m in matches if m["game_queue_id"] == 430 and m["win"])
-    aram_g = sum(1 for m in matches if m["game_queue_id"] == 450)
-    aram_w = sum(1 for m in matches if m["game_queue_id"] == 450 and m["win"])
-    flex_g = sum(1 for m in matches if m["game_queue_id"] == 440)
-    flex_w = sum(1 for m in matches if m["game_queue_id"] == 440 and m["win"])
-    total_all = total_games
-    total_all_w = total_wins
-    # 加上一些未记录的人机场次
-    ai_g = random.randint(20, 40)
-    clash_g = random.randint(5, 15)
+    ai_g = random.randint(15, 40)
+    clash_g = random.randint(3, 15)
 
     db.execute(
         f"INSERT INTO career_overview ({', '.join(career_cols)}) "
@@ -798,14 +908,46 @@ def create_database(matches: list[dict], db_path: str = "demo_matches.db"):
          aram_g, aram_w, aram_g - aram_w,
          rank_g, rank_w, rank_g - rank_w,
          flex_g, flex_w, flex_g - flex_w,
-         total_all, total_all_w, total_all - total_all_w,
-         ai_g, ai_g, clash_g, 1, now)
+         total_games, total_wins, total_games - total_wins,
+         ai_g, ai_g, clash_g, area, now)
     )
-    print("  career_overview: 1 行")
+    print(f"    career_overview（{area_config['name']}）: 1 行")
+
+
+def create_database(area_matches: list[tuple[dict, list[dict]]],
+                    db_path: str = "demo_matches.db"):
+    """创建 demo SQLite 数据库（支持多区）。
+
+    area_matches: list of (area_config, matches)
+    """
+    if Path(db_path).exists():
+        os.remove(db_path)
+
+    db = sqlite3.connect(db_path)
+    db.execute("PRAGMA journal_mode=WAL")
+
+    db.execute(SQL_CREATE_MATCH_SUMMARY)
+    db.execute(SQL_CREATE_SUMMONER_PROFILE)
+    db.execute(SQL_CREATE_CHAMPION_MASTERY)
+    db.execute(SQL_CREATE_SEASON_HISTORY)
+    db.execute(SQL_CREATE_CAREER_OVERVIEW)
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    total_rows = 0
+
+    for area_config, matches in area_matches:
+        name = area_config["name"]
+        print(f"\n  ── {name}（area={area_config['area_id']}）──")
+        _write_players_summary(db, matches)
+        _write_summoner_profile(db, area_config, matches, now)
+        _write_champion_mastery(db, area_config, now)
+        _write_season_history(db, area_config, matches, now)
+        _write_career_overview(db, area_config, matches, now)
+        total_rows += len(matches)
 
     db.commit()
     db.close()
-    print(f"\n[OK] 数据库已创建: {db_path} ({os.path.getsize(db_path) / 1024:.1f} KB)")
+    print(f"\n[OK] 数据库已创建: {db_path} ({os.path.getsize(db_path) / 1024:.1f} KB, 共 {total_rows} 局)")
 
 
 # ── 主入口 ────────────────────────────────────────────────────────────────────
@@ -814,7 +956,10 @@ if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser(description="生成 LOLhistory 演示数据")
     ap.add_argument("--games", type=int, default=250,
-                    help="模拟对局数（默认 250）")
+                    help="模拟对局数（默认 250，多区按权重分配）")
+    ap.add_argument("--area", type=str, default="all",
+                    help="大区：默认 'all' 生成多区数据，"
+                         "指定名称（如 '艾欧尼亚'）仅生成单区")
     ap.add_argument("--db-only", action="store_true",
                     help="仅生成数据库，不生成报告")
     ap.add_argument("--db", default="demo_matches.db",
@@ -823,18 +968,53 @@ if __name__ == "__main__":
                     help="报告输出路径（默认: demo_report.html）")
     args = ap.parse_args()
 
-    print(f"正在生成 {args.games} 场模拟对局数据...")
-    matches = generate_matches(args.games)
+    # ── 解析大区配置 ──
+    if args.area.lower() in ("all", "全部"):
+        active_configs = AREA_CONFIGS
+    else:
+        # 按中文名匹配
+        matched = [ac for ac in AREA_CONFIGS if args.area in ac["name"]]
+        if not matched:
+            print(f"[!] 未找到大区 '{args.area}'，可用: {[ac['name'] for ac in AREA_CONFIGS]}")
+            sys.exit(1)
+        active_configs = matched
 
+    # ── 按权重分配总局数 ──
+    total_weight = sum(ac["weight"] for ac in active_configs)
+    area_games = []
+    for ac in active_configs:
+        n = max(1, args.games * ac["weight"] // total_weight)
+        area_games.append(n)
+    # 补足余数让总数精确
+    diff = args.games - sum(area_games)
+    if diff > 0:
+        area_games[-1] += diff
+
+    # ── 生成每区数据（不同 seed 保证差异化）──
+    all_area_matches: list[tuple[dict, list[dict]]] = []
+    print(f"正在生成 {args.games} 场模拟对局数据（{len(active_configs)} 个大区）...")
+    for ac, n in zip(active_configs, area_games):
+        random.seed(42 + ac["area_id"])
+        print(f"  {ac['name']}（area={ac['area_id']}）: {n} 局")
+        matches = generate_matches(ac, n)
+        all_area_matches.append((ac, matches))
+
+    # ── 写入数据库 ──
     print(f"\n正在写入数据库...")
-    create_database(matches, args.db)
+    create_database(all_area_matches, args.db)
 
+    # ── 生成报告 ──
     if not args.db_only:
         print(f"\n正在生成分析报告...")
         from lolhistory._analysis import generate_report
-        path = generate_report(db_path=args.db, output_path=args.output)
+        area_ids = [ac["area_id"] for ac in active_configs]
+        path = generate_report(db_path=args.db, output_path=args.output,
+                               area_ids=area_ids)
         print(f"\n[OK] 演示报告已生成: {path}")
         print(f"   在浏览器中打开即可查看。")
     else:
         print(f"\n[OK] 数据库已就绪，运行以下命令生成报告：")
-        print(f"   .venv/Scripts/python -m lolhistory --analyze --db {args.db} --output {args.output}")
+        area_ids_str = ",".join(str(ac["area_id"]) for ac in active_configs)
+        print(f"   .venv/Scripts/python -m lolhistory --analyze"
+              f" --db {args.db} --output {args.output}"
+              f" --area {area_ids_str}")

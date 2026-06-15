@@ -19,7 +19,11 @@ TODO*
 test*.py
 api-export/*
 !example*
-!demo*
+# Demo 生成的文件不应跟踪
+demo*.db
+demo_report*.html
+demo*.html
+!demo/demo_generate_data.py
 
 
 # IDE settings
