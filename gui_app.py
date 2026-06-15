@@ -39,7 +39,7 @@ else:
 
 # ── tkinter ──────────────────────────────────────────────────────────────────
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 颜色主题 — 与 HTML 报告 Shadow Isles 暗色主题保持一致
@@ -751,7 +751,7 @@ class LOLHistoryApp:
         cap_header = tk.Frame(cap_inner, bg=THEME["card"])
         cap_header.pack(fill="x")
 
-        tk.Label(cap_header, text="⭐ 方式一：一键抓包", font=("Microsoft YaHei", 13, "bold"),
+        tk.Label(cap_header, text="⭐ 一键抓包", font=("Microsoft YaHei", 13, "bold"),
                   bg=THEME["card"], fg=THEME["gold"]).pack(side="left")
         tk.Label(cap_header, text="推荐  |  无需任何操作，登录 WeGame 即自动完成",
                   font=FONT_SMALL, bg=THEME["card"], fg=THEME["text3"]).pack(side="left", padx=(10, 0))
@@ -806,179 +806,7 @@ class LOLHistoryApp:
             command=self._run_capture)
         self._btn_capture.pack(side="left")
 
-        # ── 方式二：选择已有文件 / 手动填入 ─────────────────────────────────
-        self._manual_card = tk.Frame(page, bg=THEME["card"],
-                                      highlightbackground=THEME["border"],
-                                      highlightthickness=1)
-        self._manual_card.pack(fill="x")
-
-        man_inner = tk.Frame(self._manual_card, bg=THEME["card"])
-        man_inner.pack(fill="both", expand=True, padx=20, pady=10)
-
-        tk.Label(man_inner, text="方式二：选择凭据文件或手动填入",
-                  font=("Microsoft YaHei", 13, "bold"),
-                  bg=THEME["card"], fg=THEME["text"]).pack(anchor="w")
-
-        # 选择文件按钮
-        file_row = tk.Frame(man_inner, bg=THEME["card"])
-        file_row.pack(fill="x", pady=(6, 2))
-
-        tk.Button(file_row, text="📂 选择凭据文件（cookies.json）", font=FONT_BTN_SM,
-                   bg=THEME["card2"], fg=THEME["blue2"], activebackground=THEME["hover"],
-                   activeforeground=THEME["blue"], relief="flat",
-                   padx=14, pady=6, cursor="hand2", borderwidth=1,
-                   command=self._select_cookie_file).pack(side="left")
-
-        self._file_status = tk.Label(man_inner, text="",
-                                      font=FONT_SMALL, bg=THEME["card"], fg=THEME["text3"])
-        self._file_status.pack(anchor="w")
-
-        # 如果有已保存的 Cookie，显示提示
-        if self._saved_cookies:
-            saved_info = tk.Label(man_inner,
-                                   text=f"💾 检测到已保存的登录凭据（可直接下一步）",
-                                   font=FONT_SMALL, bg=THEME["card"], fg=THEME["gold_dim"])
-            saved_info.pack(anchor="w", pady=(6, 0))
-
-        # 手动输入区域（可折叠）
-        self._manual_toggle = tk.Label(man_inner, text="▸ 手动填写凭据（高级）",
-                                        font=FONT_SMALL, bg=THEME["card"],
-                                        fg=THEME["text3"], cursor="hand2")
-        self._manual_toggle.pack(anchor="w", pady=(4, 0))
-        self._manual_toggle.bind("<Button-1>", self._toggle_manual_input)
-
-        self._manual_frame = tk.Frame(man_inner, bg=THEME["card"])
-        # 默认隐藏
-
-        fields = [
-            ("puin", "数字用户 ID（如 123456789）"),
-            ("pkey", "加密密钥（以 0003 开头）"),
-            ("tgp_biz_ticket", "业务票据（以 0100 开头）"),
-            ("tgp_id", "TGP 用户 ID（数字）"),
-        ]
-
-        self._cookie_placeholders = {ph for _, ph in fields}
-        self._cookie_entries: dict[str, tuple[tk.Entry, tk.Label]] = {}
-
-        for name, placeholder in fields:
-            row = tk.Frame(self._manual_frame, bg=THEME["card"])
-            row.pack(fill="x", pady=3)
-
-            tk.Label(row, text=name, font=FONT_MONO, width=20, anchor="e",
-                      bg=THEME["card"], fg=THEME["gold"]).pack(side="left", padx=(0, 8))
-            entry = tk.Entry(row, font=FONT_MONO, bg=THEME["input_bg"],
-                              fg=THEME["text"], insertbackground=THEME["text"],
-                              relief="flat", width=66, show="*")
-            entry.insert(0, placeholder)
-            entry.bind("<FocusIn>", lambda e, ph=placeholder: self._on_entry_focus(e, ph))
-            entry.bind("<FocusOut>", lambda e, ph=placeholder: self._on_entry_blur(e, ph))
-            entry.pack(side="left", fill="x", expand=True)
-            self._cookie_entries[name] = (entry, row)
-
-            # 显示/隐藏切换
-            show_btn = tk.Label(row, text="👁", font=FONT_SMALL,
-                                 bg=THEME["card"], fg=THEME["text3"], cursor="hand2")
-            show_btn.pack(side="left", padx=(6, 0))
-            show_btn.bind("<Button-1>", lambda e, en=entry: self._toggle_entry_visibility(en))
-
-        # 粘贴 cURL 文本区
-        curl_frame = tk.Frame(self._manual_frame, bg=THEME["card"])
-        curl_frame.pack(fill="x", pady=(8, 0))
-
-        tk.Label(curl_frame, text="或粘贴 cURL 请求（从浏览器复制）：", font=FONT_SMALL,
-                  bg=THEME["card"], fg=THEME["text3"]).pack(anchor="w")
-
-        self._curl_text = tk.Text(curl_frame, font=FONT_MONO, bg=THEME["input_bg"],
-                                    fg=THEME["text"], insertbackground=THEME["text"],
-                                    relief="flat", height=3, wrap="word")
-        self._curl_text.pack(fill="x", pady=(4, 4))
-        self._curl_text.bind("<<Modified>>", self._on_curl_modified)
-
-        self._curl_status = tk.Label(curl_frame, text="",
-                                      font=FONT_SMALL, bg=THEME["card"], fg=THEME["green"])
-        self._curl_status.pack(anchor="w")
-
         return page
-
-    def _toggle_manual_input(self, event=None):
-        if self._manual_frame.winfo_ismapped():
-            self._manual_frame.pack_forget()
-            self._manual_toggle.configure(text="▸ 手动填写凭据（高级）")
-        else:
-            self._manual_frame.pack(fill="x", pady=(0, 4))
-            self._manual_toggle.configure(text="▾ 手动填写凭据（高级）")
-
-    def _on_entry_focus(self, event, placeholder: str):
-        entry: tk.Entry = event.widget
-        if entry.get() == placeholder:
-            entry.delete(0, "end")
-            entry.configure(fg=THEME["text"])
-
-    def _on_entry_blur(self, event, placeholder: str):
-        entry: tk.Entry = event.widget
-        if not entry.get().strip():
-            entry.delete(0, "end")
-            entry.insert(0, placeholder)
-            entry.configure(fg=THEME["text3"])
-
-    def _toggle_entry_visibility(self, entry: tk.Entry):
-        if entry.cget("show") == "*":
-            entry.configure(show="")
-        else:
-            entry.configure(show="*")
-
-    def _on_curl_modified(self, event=None):
-        """解析粘贴的 cURL 文本。"""
-        text = self._curl_text.get("0.0", "end").strip()
-        if not text or len(text) < 10:
-            self._curl_text.edit_modified(False)
-            return
-
-        self._curl_text.edit_modified(False)
-
-        if "curl" not in text.lower():
-            return
-
-        self._curl_status.configure(text="正在解析凭据...", fg=THEME["orange"])
-
-        try:
-            # 临时写入文件，使用现有函数解析
-            import tempfile
-            tmp = Path(tempfile.gettempdir()) / "_lolhistory_curl.tmp"
-            tmp.write_text(text, encoding="utf-8")
-
-            from lolhistory._cookie_extract import extract_cookies_from_curl
-            from lolhistory._cookie_extract import _filter_required
-
-            cookies = extract_cookies_from_curl(tmp)
-            cookies = _filter_required(cookies)
-            tmp.unlink(missing_ok=True)
-
-            if cookies:
-                self._fill_cookie_fields(cookies)
-                self._curl_status.configure(
-                    text=f"✅ 已解析 {len(cookies)}/4 项凭据", fg=THEME["green"])
-            else:
-                self._curl_status.configure(
-                    text="⚠ 未能解析到凭据，请确认复制的是 www.wegame.com.cn 的请求",
-                    fg=THEME["orange"])
-        except Exception as e:
-            self._curl_status.configure(text=f"❌ 解析失败: {e}", fg=THEME["red"])
-
-    def _fill_cookie_fields(self, cookies: dict):
-        """将 Cookie 填入输入框。"""
-        for key, (entry, row) in self._cookie_entries.items():
-            if key in cookies and cookies[key]:
-                entry.delete(0, "end")
-                entry.insert(0, cookies[key])
-                entry.configure(fg=THEME["text"])
-
-        # 更新按钮状态
-        self._update_cookie_button()
-
-        # 自动展开手动输入区
-        if not self._manual_frame.winfo_ismapped():
-            self._toggle_manual_input()
 
     def _update_cookie_button(self):
         """根据当前 Cookie 状态更新「下一步」按钮。"""
@@ -992,47 +820,20 @@ class LOLHistoryApp:
                                          text=f"还需 {4 - len(cookies)} 项凭据")
 
     def _collect_cookies(self) -> dict:
-        """从各种来源收集 Cookie。"""
+        """从一键抓包或已保存的 Cookie 中收集凭据。"""
         cookies = {}
 
         # 1. 优先使用一键抓包的结果
         if self._cookies:
             cookies.update(self._cookies)
 
-        # 2. 从手动输入框获取（排除占位符文本）
-        for key, (entry, _) in self._cookie_entries.items():
-            val = entry.get().strip()
-            if val and val not in self._cookie_placeholders:
-                cookies[key] = val
-
-        # 3. 从已保存的 Cookie 获取（作为补充）
+        # 2. 从已保存的 Cookie 获取（作为补充）
         if self._saved_cookies:
             for k, v in self._saved_cookies.items():
                 if k not in cookies and v:
                     cookies[k] = v
 
         return _clean_cookies(cookies)
-
-    def _select_cookie_file(self):
-        """打开文件选择对话框。"""
-        path = filedialog.askopenfilename(
-            title="选择凭据文件",
-            filetypes=[("JSON 文件", "*.json"), ("所有文件", "*.*")],
-        )
-        if not path:
-            return
-
-        try:
-            from lolhistory._wegame import load_cookies
-            cookies = load_cookies(path)
-            self._cookies = cookies
-            self._fill_cookie_fields(cookies)
-            self._file_status.configure(
-                text=f"✅ 已加载: {Path(path).name} ({len(cookies)} 项)",
-                fg=THEME["green"])
-            self._update_cookie_button()
-        except Exception as e:
-            self._file_status.configure(text=f"❌ 加载失败: {e}", fg=THEME["red"])
 
     def _run_capture(self):
         """在后台线程启动一键抓包。"""
@@ -1123,10 +924,7 @@ class LOLHistoryApp:
             fg=THEME["green"])
         self._btn_capture.configure(state="normal", text="🔄 重新抓包")
 
-        self._fill_cookie_fields(cookies)
         self._update_cookie_button()
-
-        # 刷新手动输入区的 cookies
         self._saved_cookies = cookies
 
     def _handle_capture_fail(self, missing: list):

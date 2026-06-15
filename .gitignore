@@ -20,7 +20,7 @@ test*.py
 api-export/*
 !example*
 # Demo 生成的文件需要跟踪
-!demo/*
+!demo/demo*
 
 # IDE settings
 .vscode/
