@@ -19,12 +19,7 @@ TODO*
 test*.py
 api-export/*
 !example*
-# Demo 生成的文件不应跟踪
-demo*.db
-demo_report*.html
-demo*.html
-!demo/demo_generate_data.py
-
+# Demo 生成的文件需要跟踪
 
 # IDE settings
 .vscode/

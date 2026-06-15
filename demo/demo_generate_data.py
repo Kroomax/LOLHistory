@@ -1,10 +1,10 @@
 """生成演示用模拟数据，用于项目展示。
 
 用法:
-    .venv/Scripts/python demo/demo_generate_data.py                # 生成多区 db + 报告
-    .venv/Scripts/python demo/demo_generate_data.py --db-only      # 仅生成数据库
-    .venv/Scripts/python demo/demo_generate_data.py --games 500    # 自定义对局数
-    .venv/Scripts/python demo/demo_generate_data.py --area 祖安    # 仅生成单区数据
+    .venv/Scripts/python demo/demo_generate_data.py     # 生成 996 局多区 db + 报告
+                                                        # 输出到 demo/demo_matches.db
+                                                        #        demo/demo_report.html
+    # 无传入参数，固定 996 局。如需调整请直接修改脚本。
 """
 
 import sys
@@ -953,46 +953,28 @@ def create_database(area_matches: list[tuple[dict, list[dict]]],
 # ── 主入口 ────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import argparse
-    ap = argparse.ArgumentParser(description="生成 LOLhistory 演示数据")
-    ap.add_argument("--games", type=int, default=250,
-                    help="模拟对局数（默认 250，多区按权重分配）")
-    ap.add_argument("--area", type=str, default="all",
-                    help="大区：默认 'all' 生成多区数据，"
-                         "指定名称（如 '艾欧尼亚'）仅生成单区")
-    ap.add_argument("--db-only", action="store_true",
-                    help="仅生成数据库，不生成报告")
-    ap.add_argument("--db", default="demo_matches.db",
-                    help="数据库输出路径（默认: demo_matches.db）")
-    ap.add_argument("--output", default="demo_report.html",
-                    help="报告输出路径（默认: demo_report.html）")
-    args = ap.parse_args()
+    # 固定参数：生成 996 局，3 个区，输出到 demo/ 目录
+    NUM_GAMES = 996
+    DB_PATH = Path(__file__).parent / "demo_matches.db"
+    REPORT_PATH = Path(__file__).parent / "demo_report.html"
 
     # ── 解析大区配置 ──
-    if args.area.lower() in ("all", "全部"):
-        active_configs = AREA_CONFIGS
-    else:
-        # 按中文名匹配
-        matched = [ac for ac in AREA_CONFIGS if args.area in ac["name"]]
-        if not matched:
-            print(f"[!] 未找到大区 '{args.area}'，可用: {[ac['name'] for ac in AREA_CONFIGS]}")
-            sys.exit(1)
-        active_configs = matched
+    active_configs = AREA_CONFIGS
 
     # ── 按权重分配总局数 ──
     total_weight = sum(ac["weight"] for ac in active_configs)
     area_games = []
     for ac in active_configs:
-        n = max(1, args.games * ac["weight"] // total_weight)
+        n = max(1, NUM_GAMES * ac["weight"] // total_weight)
         area_games.append(n)
     # 补足余数让总数精确
-    diff = args.games - sum(area_games)
+    diff = NUM_GAMES - sum(area_games)
     if diff > 0:
         area_games[-1] += diff
 
     # ── 生成每区数据（不同 seed 保证差异化）──
     all_area_matches: list[tuple[dict, list[dict]]] = []
-    print(f"正在生成 {args.games} 场模拟对局数据（{len(active_configs)} 个大区）...")
+    print(f"正在生成 {NUM_GAMES} 场模拟对局数据（{len(active_configs)} 个大区）...")
     for ac, n in zip(active_configs, area_games):
         random.seed(42 + ac["area_id"])
         print(f"  {ac['name']}（area={ac['area_id']}）: {n} 局")
@@ -1001,20 +983,13 @@ if __name__ == "__main__":
 
     # ── 写入数据库 ──
     print(f"\n正在写入数据库...")
-    create_database(all_area_matches, args.db)
+    create_database(all_area_matches, str(DB_PATH))
 
     # ── 生成报告 ──
-    if not args.db_only:
-        print(f"\n正在生成分析报告...")
-        from lolhistory._analysis import generate_report
-        area_ids = [ac["area_id"] for ac in active_configs]
-        path = generate_report(db_path=args.db, output_path=args.output,
-                               area_ids=area_ids)
-        print(f"\n[OK] 演示报告已生成: {path}")
-        print(f"   在浏览器中打开即可查看。")
-    else:
-        print(f"\n[OK] 数据库已就绪，运行以下命令生成报告：")
-        area_ids_str = ",".join(str(ac["area_id"]) for ac in active_configs)
-        print(f"   .venv/Scripts/python -m lolhistory --analyze"
-              f" --db {args.db} --output {args.output}"
-              f" --area {area_ids_str}")
+    print(f"\n正在生成分析报告...")
+    from lolhistory._analysis import generate_report
+    area_ids = [ac["area_id"] for ac in active_configs]
+    path = generate_report(db_path=str(DB_PATH), output_path=str(REPORT_PATH),
+                           area_ids=area_ids)
+    print(f"\n[OK] 演示报告已生成: {path}")
+    print(f"   在浏览器中打开即可查看。")
