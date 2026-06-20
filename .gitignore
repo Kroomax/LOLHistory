@@ -17,13 +17,14 @@ cookies.json
 report*.html
 TODO*
 test*.py
-api-export/*
-!example*
+api-export/
+
 # Demo 生成的文件需要跟踪
 !demo/demo*
 
 # IDE settings
 .vscode/
+.claude/
 
 # PyInstaller packaging
 build/

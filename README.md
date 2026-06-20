@@ -68,11 +68,13 @@ GUI 把所有操作整合为 **4 步向导**，无需记忆任何命令：
 **启动方式：**
 
 ```bash
-# 源码运行（推荐用 pythonw 避免控制台窗口）
+# 源码运行
 pythonw gui_app.py
 ```
 
 或使用打包好的 `LOLhistory.exe`（见 [Releases](https://github.com)），双击直接运行，无需安装 Python。
+
+![客户端截图示例](assets/GUI-4拉取数据页.PNG)
 
 **首次使用流程：**
 
@@ -92,6 +94,8 @@ pythonw gui_app.py
 - 一键抓包自动获取凭据，无需手动操作
 - 可折叠技术日志区，普通用户无需关心
 - 数据拉取可随时取消
+
+![报告截图示例](assets/Report-1总览.png)
 
 ---
 
