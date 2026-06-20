@@ -3056,7 +3056,7 @@ def _build_nav(extra_html: str = "") -> str:
         ("#attendance", "\U0001f4c5 出勤日历"),
     ]
     links = "".join(f'<a href="{href}">{label}</a>' for href, label in items)
-    return f'<nav><span class="logo">⚔️ LOLhistory</span>{extra_html}{links}</nav>'
+    return f'<nav><span class="logo"><a href="https://github.com/Kroomax/LOLHistory" target="_blank" style="color:inherit;text-decoration:none">⚔️ LOLhistory</a></span>{extra_html}{links}</nav>'
 
 def _build_hero(results: dict) -> str:
     ov = results.get("overview", {})
@@ -3366,9 +3366,9 @@ def _build_section_attendance(r: dict) -> str:
 
     return f'<section id="attendance" class="section"><div class="section-title">📅 出勤日历</div><div class="section-subtitle">游戏习惯、活跃时段与段位变化全景</div><div class="chart-grid">{"".join(cards)}</div></section>'
 
-def _build_footer(games: int, export_time: str) -> str:
+def _build_footer(export_time: str) -> str:
     return f"""<footer>
-<p>由 <span>LOLhistory</span> 生成 · 共 {games} 场对局 · 导出时间 {export_time}</p>
+<p>由 <a href="https://github.com/Kroomax/LOLHistory" target="_blank" style="color:var(--gold);text-decoration:none">LOLhistory</a> 生成 · 导出时间 {export_time}</p>
 <p style="margin-top:4px;font-size:11px">所有数据来源于 WeGame API，仅供个人参考。图表由 Chart.js 驱动。</p>
 </footer>"""
 
@@ -4076,7 +4076,7 @@ def _build_html(results: dict) -> str:
         _build_section_attendance(results),
     ])
     charts_js = _build_all_charts(results)
-    footer = _build_footer(ov.get("total_games", 0), export_time)
+    footer = _build_footer(export_time)
     initial_skin_url = f"https://wegame.gtimg.com/g.26-r.c2d3c/helper/lol/assis/images/resources/skins/original/{champion_id}-001.jpg" if champion_id else ""
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -4209,7 +4209,7 @@ nav .area-switch-nav select:focus { outline:none; border-color:#c8aa6e; }
         "".join(f'<option value="{aid}">{area_data[aid]["name"]}</option>' for aid in area_ids) + \
         '</select></span>'
     nav = _build_nav(area_switcher_html)
-    footer = _build_footer(0, export_time)
+    footer = _build_footer(export_time)
     initial_skin_url = f"https://wegame.gtimg.com/g.26-r.c2d3c/helper/lol/assis/images/resources/skins/original/{champion_id}-001.jpg" if champion_id else ""
 
     # 为每个大区生成独立的图表初始化代码 + HTML 内容块
