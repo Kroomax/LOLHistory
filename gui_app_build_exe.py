@@ -1,7 +1,7 @@
 """LOLhistory GUI - PyInstaller packaging script (Python version).
 
 Replaces build_exe.bat, avoiding bat encoding/escaping issues.
-Usage: .venv\\Scripts\\python build_exe.py
+Usage: .venv\\Scripts\\python gui_app_build_exe.py
 """
 
 import os
@@ -146,7 +146,7 @@ def main() -> int:
         "--noconsole",
         "--clean",
         "--name", out_name,
-        "--icon", str(ROOT / "archive" / "exe-icon.ico"),
+        "--icon", str(ROOT / "assets" / "exe-icon.ico"),
         # ── mitmproxy: 只收集 data + binaries，不收集全部子模块 ──
         #   原因：addons/__init__.py 已显式导入所有 addon，PyInstaller 可自动追踪。
         #   全部 --collect-submodules 会把 Console UI (urwid)、Web UI 等打包进去。

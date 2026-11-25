@@ -10,17 +10,23 @@ __pycache__/
 cookies.json
 
 # Generated output files
+output/
 *.csv
 *.db
 *.db-shm
 *.db-wal
 report*.html
-TODO*
-test*.py
-api-export/
+TODO_*
+/test_*.py
+/wegame-api-export/
 
-# Demo 生成的文件需要跟踪
-!demo/demo*
+# Demo 生成物：源码与示例报告入库，数据库为可再生文件
+!demo/demo_generate_data.py
+!demo/demo_report.html
+
+# assets 下的临时截图（本地素材，不入库）
+/assets/PixPin_*
+/assets/Snipaste_*
 
 # IDE settings
 .vscode/

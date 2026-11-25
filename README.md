@@ -187,12 +187,14 @@ python -m lolhistory --cookies cookies.json --area 艾欧尼亚,祖安,黑色玫
 python -m lolhistory --cookies cookies.json --area all
 ```
 
-跑完在当前目录生成两个文件：
+跑完在 `output/` 目录生成两个文件：
 
 ```
-wegame_matches.csv    ← Excel 拖进去就能看，36 列中文表头
-wegame_matches.db     ← SQLite，6 张表（对局摘要 + 10 人详情 + 召唤师资料 + 英雄熟练度 + 赛季历史 + 生涯总览）
+output/wegame_matches.csv    ← Excel 拖进去就能看，36 列中文表头
+output/wegame_matches.db     ← SQLite，6 张表（对局摘要 + 10 人详情 + 召唤师资料 + 英雄熟练度 + 赛季历史 + 生涯总览）
 ```
+
+> 💡 想放到别处用 `-o` 指定，例如 `-o ./my-data`。
 
 ---
 
@@ -207,7 +209,7 @@ wegame_matches.db     ← SQLite，6 张表（对局摘要 + 10 人详情 + 召�
 | `-n N` | 最大对局数（默认 501，上限 ~500） |
 | `--detail` | 逐场拉取 10 人完整详情（装备/符文/ban） |
 | `--detail-game ID` | 查单场详情并在终端打印 |
-| `-o ./output` | 输出目录 |
+| `-o DIR` | 输出目录（默认 `output/`） |
 | `--no-csv` | 跳过 CSV 导出（仅导出 SQLite） |
 | `--no-sqlite` | 跳过 SQLite 导出（仅导出 CSV） |
 | `--openid BASE64` | 手动指定加密 openid（省略则自动探测） |
@@ -261,6 +263,18 @@ MVP / SVP / 投降 / 挂机   击杀最多 / 助攻最多 / 金币最多 / 伤�
 python -m lolhistory --analyze
 ```
 
+### 先看效果：脱敏示例报告
+
+不想装 Python，也想先看成品长什么样？直接打开仓库里这份示例报告：
+
+**[`demo/demo_report.html`](demo/demo_report.html)** — 996 局、3 个大区的虚构数据（玩家名统一为 `DemoPlayer*`，无真实信息）。
+
+数据由 `demo/demo_generate_data.py` 生成，可随时重新生成（数据库为可再生文件，不入库）：
+
+```bash
+.venv/Scripts/python demo/demo_generate_data.py
+```
+
 ### 6 大分析板块，30+ 图表
 
 | 板块 | 分析内容 |
@@ -296,6 +310,8 @@ python -m lolhistory --analyze --db my_matches.db          # 指定数据库
 python -m lolhistory --analyze --output my_report.html      # 指定输出路径
 ```
 
+> 默认读取 `output/wegame_matches.db`，该文件不存在时自动回退到当前目录的 `wegame_matches.db`；报告默认写到 `output/report_<日期>.html`。
+
 > 💡 **数据要求**：基础分析只需 `match_summary` 表；装备/符文等详情维度需要 `--detail` 导出的 `match_detail` 表。
 
 ---
@@ -319,7 +335,7 @@ WeGame API 服务端限制，<code>offset ≥ 500</code> 直接返回空。这�
 
 <details>
 <summary><strong>GUI 和命令行数据互通吗？</strong></summary>
-完全互通。两者使用同一数据库文件 <code>wegame_matches.db</code>，GUI 中拉取的数据可以在命令行 <code>--analyze</code> 分析，反之亦然。
+互通。两者使用同一套数据库结构（<code>wegame_matches.db</code>）：GUI 输出在程序所在目录，命令行默认输出到 <code>output/</code>。省略 <code>--db</code> 时，命令行会自动回退读取当前目录的 <code>wegame_matches.db</code>；需要指定其他位置时加 <code>--db 路径</code> 即可。
 </details>
 
 <details>
@@ -341,7 +357,7 @@ python gui_app_build_exe.py
 
 ## 📜 License
 
-MIT © 2026
+[MIT](LICENSE) © 2026
 
 ---
 

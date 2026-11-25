@@ -28,6 +28,10 @@ from ._data import get_queue_name
 
 logger = logging.getLogger("lolhistory")
 
+# 默认输出目录：导出产物（CSV/SQLite/JSON/HTML）统一落在此目录，保持仓库根目录干净
+DEFAULT_OUTPUT_DIR = "output"
+DEFAULT_DB_NAME = "wegame_matches.db"
+
 # ──────────────────────────────────────────────────────────────────────────
 # CLI
 # ──────────────────────────────────────────────────────────────────────────
@@ -109,8 +113,8 @@ def build_parser() -> argparse.ArgumentParser:
     out = p.add_argument_group("输出")
     out.add_argument("--no-csv", action="store_true",
                      help="跳过 CSV 导出（仅导出 SQLite）")
-    out.add_argument("-o", "--output-dir", default=".",
-                     help="输出目录（默认: 当前目录）")
+    out.add_argument("-o", "--output-dir", default=DEFAULT_OUTPUT_DIR,
+                     help=f"输出目录（默认: {DEFAULT_OUTPUT_DIR}/）")
     out.add_argument("--no-sqlite", action="store_true",
                      help="跳过 SQLite 导出（仅导出 CSV）")
 
@@ -118,10 +122,12 @@ def build_parser() -> argparse.ArgumentParser:
     ana = p.add_argument_group("数据分析")
     ana.add_argument("--analyze", action="store_true",
                      help="从 SQLite 数据生成交互式 HTML 分析报告")
-    ana.add_argument("--db", default="wegame_matches.db",
-                     help="SQLite 数据库路径（默认: wegame_matches.db）")
-    ana.add_argument("--output", dest="html_output", default="report.html",
-                     help="HTML 报告输出路径（默认: report.html，自动添加日期后缀）")
+    ana.add_argument("--db", default=None,
+                     help=f"SQLite 数据库路径（默认: {DEFAULT_OUTPUT_DIR}/{DEFAULT_DB_NAME}，"
+                          f"不存在时回退到当前目录的 {DEFAULT_DB_NAME}）")
+    ana.add_argument("--output", dest="html_output", default=None,
+                     help=f"HTML 报告输出路径（默认: {DEFAULT_OUTPUT_DIR}/report.html，"
+                          "自动添加日期后缀）")
 
     # ── 其他 ─────────────────────────────────────────────────────────────
     p.add_argument("-v", "--verbose", action="store_true", help="详细日志输出")
@@ -721,10 +727,18 @@ def main(argv: list[str] | None = None) -> int:
     # 数据分析模式
     if args.analyze:
         from ._analysis import generate_report
+        db_path = args.db
+        if db_path is None:
+            # 默认读 output/ 下的库；老版本留在当前目录的库仍可直接分析
+            db_path = os.path.join(DEFAULT_OUTPUT_DIR, DEFAULT_DB_NAME)
+            if not os.path.exists(db_path) and os.path.exists(DEFAULT_DB_NAME):
+                db_path = DEFAULT_DB_NAME
+        html_output = args.html_output or os.path.join(DEFAULT_OUTPUT_DIR, "report.html")
+        Path(html_output).parent.mkdir(parents=True, exist_ok=True)
         try:
             path = generate_report(
-                db_path=args.db,
-                output_path=args.html_output,
+                db_path=db_path,
+                output_path=html_output,
                 area_ids=area_ids,
             )
             print(f"\n[OK] 分析报告已生成: {path}")

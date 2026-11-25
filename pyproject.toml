@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lolhistory"
+dynamic = ["version"]
+description = "英雄联盟对局历史导出与分析工具（WeGame API，无需客户端）"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "LOLhistory contributors" }]
+keywords = ["league-of-legends", "wegame", "match-history", "sqlite", "visualization"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Environment :: Console",
+    "Environment :: Win32 (MS Windows)",
+]
+dependencies = [
+    "requests>=2.31.0",
+    "mitmproxy>=10.0.0",
+]
+
+[project.optional-dependencies]
+build = ["pyinstaller>=6.0"]
+
+[project.scripts]
+lolhistory = "lolhistory.__main__:main"
+
+[tool.setuptools]
+packages = ["lolhistory"]
+
+[tool.setuptools.dynamic]
+version = { attr = "lolhistory.__version__" }

@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-本文件为 Claude Code（claude.ai/code）在此仓库中工作时提供指引。
+本文件为 AI 编码助手在此仓库中工作时提供指引。
 
 ## 运行命令
 
@@ -32,7 +32,9 @@
 .venv/Scripts/python -m lolhistory --analyze --db my_matches.db --output my_report.html
 ```
 
-无测试、lint 或构建步骤。
+导出产物（CSV/SQLite/JSON/HTML 报告）默认落在 `output/`，不再污染仓库根目录；`--analyze` 省略 `--db` 时优先读 `output/wegame_matches.db`，不存在则回退当前目录的 `wegame_matches.db`。
+
+无测试、lint 或构建步骤（打包用 `gui_app_build_exe.py`，图标在 `assets/exe-icon.ico`）。
 
 ## 架构
 
@@ -48,7 +50,7 @@ MVP 结构，7 个模块各司其职：
 | `_export.py` | 导出：CSV（UTF-8 BOM）+ SQLite（6 张表） |
 | `_analysis.py` | 数据分析：从 SQLite 读取 → 30+ 维度分析 → 生成单个交互式 HTML 报告（6 章，~30 图表） |
 
-`archive/_lcu.py` 为已弃用的 LCU API 实现（方法1+2），保留作为技术参考。Riot 官方 API（方法4，国服不可用）未实现。
+`assets/_lcu.py` 为已弃用的 LCU API 实现（方法1+2），保留作为技术参考。Riot 官方 API（方法4，国服不可用）未实现。
 
 ## WeGame API 关键点
 
